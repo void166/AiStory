@@ -4,12 +4,11 @@
   "description": "",
   "main": "dist/app.js",
   "scripts": {
-    "start": "node --loader ts-node/esm src/app.ts"
+    "start": "nodemon"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
   "dependencies": {
     "dotenv": "^17.2.3",
     "express": "^5.2.1",

@@ -1,5 +1,5 @@
 import { DataTypes, Model, type Optional } from "sequelize";
-import sequelize from "../config/db.js";
+import sequelize from "../config/db";
 
 interface TemplateAttributes{
     id: string;

@@ -1,5 +1,5 @@
 import { DataTypes, Model, type Optional } from "sequelize";
-import sequelize from "../config/db.js";
+import sequelize from "../config/db";
 
 interface ProjectAttributes{
     id: string;
@@ -27,7 +27,7 @@ Project.init({
         allowNull: false
     },
     userId:{
-        type: DataTypes.STRING,
+        type: DataTypes.UUID,
         allowNull: false,
     }
 },{
