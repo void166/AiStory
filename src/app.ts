@@ -2,10 +2,14 @@ import express from "express";
 import type { Request, Response } from "express";
 import { associations } from "./model/Associations";
 import sequelize from "./config/db";
+import authRouter from "./routes/authRoutes";
 
 const app = express();
 
 app.use(express.json());
+
+
+app.use('/api/auth',authRouter);
 
 (async ()=>{
   try{
