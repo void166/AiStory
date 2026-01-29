@@ -12,9 +12,9 @@ const {JWT_SECRET}= config;
 export class AuthController{
     async signUp(req:Request, res: Response){
         try{
-            const {email, password}: SignUpDTO = req.body; 
+            const {email, password, fullname}: SignUpDTO = req.body; 
 
-            if(!email || !password){
+            if(!email || !password || !fullname){
                 return res.status(400).json({
                     success: false,
                     message: "email pass bhguen"
@@ -36,6 +36,7 @@ export class AuthController{
 
             const newUser =await User.create({
                 email: email,
+                fullname,
                 password: hashedPass
             });
 

@@ -3,6 +3,9 @@ import type { Request, Response } from "express";
 import { associations } from "./model/Associations";
 import sequelize from "./config/db";
 import authRouter from "./routes/authRoutes";
+import projectRouter from "./routes/projectRoutes";
+import aiImageRoutes from './routes/aiImageRoutes'
+import scriptRoutes from './routes/scriptRoutes'
 
 const app = express();
 
@@ -10,6 +13,11 @@ app.use(express.json());
 
 
 app.use('/api/auth',authRouter);
+app.use("/api",projectRouter);
+app.use('/api', scriptRoutes);
+app.use("/api/ai/image", aiImageRoutes);
+app.use("/api/ai/script", scriptRoutes);
+
 
 (async ()=>{
   try{

@@ -10,5 +10,8 @@ export const config = {
     DB_NAME: process.env.DB_NAME!,
     DB_PORT: process.env.DB_PORT! ? parseInt(process.env.DB_PORT, 10) : 5432,
     PORT: process.env.PORT! ? parseInt(process.env.PORT, 10) : 5000,
-    FRONTEND_URL: process.env.FRONTEND_URL!
+    FRONTEND_URL: process.env.FRONTEND_URL!,
+    GROQ_API: process.env.GROQ_API || "",
+    MAGICHOUR_API: process.env.MAGICHOUR_API || "",
+    NANO_BANANA_API: process.env.NANO_BANANA_API || ""
 }

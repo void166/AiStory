@@ -3,24 +3,32 @@ import sequelize from "../config/db";
 
 interface VideoAttributes{
     id: string;
+    userId: string;
     projectId: string;
-    status: "processing" | "done" | "failed";
-    fileUrl: string;
+    status: "queued" | "processing" |"completed"| "failed";
     progress: number;
-    duration: number;
-    resolution: string;
+    currentStep: string;
+    videoUrl?: string | null;
+    thumbnailUrl: string | null;
+    duration?: number | null;
+    fileSize?: number | null;
+    errorMessage? : string | null;
 }
 
 interface VideoCreationAttributes extends Optional<VideoAttributes, "id">{}
 
 export class Video extends Model<VideoAttributes, VideoCreationAttributes> implements VideoAttributes{
-    declare id: string;
-    declare projectId: string;
-    declare status: "processing" | "done" | "failed";
-    declare fileUrl: string;
-    declare progress: number;
-    declare duration: number;
-    declare resolution: string;
+  declare id: string;
+  declare userId: string;
+  declare projectId: string;
+  declare status: 'queued' | 'processing' | 'completed' | 'failed';
+  declare progress: number;
+  declare currentStep: string;
+  declare videoUrl: string | null;
+  declare thumbnailUrl: string | null;
+  declare duration: number | null;
+  declare fileSize: number | null;
+  declare errorMessage: string | null;
 }
 
 Video.init({
@@ -30,30 +38,47 @@ Video.init({
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
     },
-    projectId:{
+    userId:{
         type: DataTypes.UUID,
         allowNull: false
     },
-    status:{
-        type: DataTypes.ENUM("processing" ,"done" , "failed"),
+    projectId:{
+        type: DataTypes.UUID,
         allowNull: false,
     },
-    fileUrl: {
-        type: DataTypes.STRING,
-        allowNull: false
+    status: {
+        type: DataTypes.ENUM('queued', 'processing', 'completed', 'failed'),
+        defaultValue: 'queued'
     },
     progress:{
         type: DataTypes.INTEGER,
-        allowNull: false
+        defaultValue: 0
+    },
+    currentStep: {
+        type: DataTypes.STRING(100),
+        defaultValue: 'Initializing...'
+    },
+    videoUrl: {
+        type: DataTypes.TEXT,
+        allowNull: true
+    },
+    thumbnailUrl: {
+        type: DataTypes.TEXT,
+        allowNull: true
     },
     duration:{
         type: DataTypes.FLOAT,
-        allowNull: false
+        allowNull: true
     },
-    resolution: {
-        type: DataTypes.STRING,
-        allowNull: false
+    fileSize: {
+        type: DataTypes.BIGINT,
+        allowNull: true
+    },
+    errorMessage:{
+        type: DataTypes.TEXT,
+        allowNull: true
     }
+      
 },{
     sequelize,
     tableName: "video",

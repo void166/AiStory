@@ -5,6 +5,7 @@ interface UserAttributes{
     id: string;
     email: string;
     password: string;
+    fullname: string
 }
 
 interface UserCreationAttributes extends Optional<UserAttributes, "id">{}
@@ -13,6 +14,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
     declare id: string;
     declare email: string;
     declare password: string;
+    declare fullname: string;
 }
 
 User.init({
@@ -29,6 +31,10 @@ User.init({
     password:{
         type: DataTypes.STRING,
         allowNull: false,
+    },
+    fullname:{
+        type: DataTypes.STRING,
+        allowNull: false
     }
 },{
     sequelize,
