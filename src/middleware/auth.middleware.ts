@@ -27,11 +27,11 @@ export const authMiddleware = (
       });
     }
 
-    const token = authHeader.split(" ")[1]; // Bearer xxx
+    const token = authHeader.split(" ")[1]; 
 
     const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
 
-    req.user = decoded; // 👉 энд хадгалж байна
+    req.user = decoded; 
 
     next();
 

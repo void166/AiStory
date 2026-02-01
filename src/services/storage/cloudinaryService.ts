@@ -1,8 +1,7 @@
 import { v2 as cloudinary } from "cloudinary";
 import { Readable } from "stream";
-import { config } from "../../config"; // ⚠️ config file-оо import хийнэ
+import { config } from "../../config"; 
 
-// ✅ Cloudinary тохиргоо
 cloudinary.config({
   cloud_name: config.CLOUDNAME,
   api_key: config.CLOUD_API_KEY,
