@@ -27,10 +27,6 @@ class AudioService {
     this.apiToken = CHIMEGE_VOICE_API || '';
   }
 
-/**
- * Convert text to audio using Chimege API
- * APPROACH 1: Parameters in Headers (as per API docs)
- */
 async textToSpeech(
     text: string,
     options?: ChimegeOptions
@@ -43,14 +39,12 @@ async textToSpeech(
       console.log('Cleaned text:', cleanedText.substring(0, 100));
       console.log('Text length:', cleanedText.length);
       
-      // Validate cleaned text
       const forbiddenChars = cleanedText.match(/[^А-ЯЁа-яёӨөҮүҢң\s?!.\-'":,]/g);
       if (forbiddenChars) {
         console.error('❌ Forbidden characters found:', forbiddenChars);
         throw new Error(`Text contains forbidden characters: ${forbiddenChars.join(', ')}`);
       }
   
-      // ✅ APPROACH 1: Send parameters in headers (as per API documentation)
       const headers = {
         'Content-Type': 'text/plain; charset=utf-8',
         'token': this.apiToken,
@@ -72,32 +66,31 @@ async textToSpeech(
   
       const response = await axios.post(
         this.apiUrl,
-        cleanedText,  // Send text as plain text body
+        cleanedText,
         {
           headers,
           responseType: 'arraybuffer',
           timeout: 60000,
-          validateStatus: (status) => status < 500  // Don't throw on 4xx errors
+          validateStatus: (status) => status < 500 
         }
       );
   
-      // Check if response is actually audio
       if (response.status !== 200) {
         const errorText = Buffer.from(response.data).toString('utf-8');
-        console.error('❌ API Error Response:', errorText);
+        console.error('API Error Response:', errorText);
         throw new Error(`API returned status ${response.status}: ${errorText}`);
       }
   
       const audioBuffer = Buffer.from(response.data);
   
-      // Validate audio buffer
+
       if (audioBuffer.length < 100) {
         const possibleError = audioBuffer.toString('utf-8');
-        console.error('❌ Response too small, might be error:', possibleError);
+        console.error('Response too small, might be error:', possibleError);
         throw new Error('Invalid audio response from API');
       }
   
-      console.log(`✅ Audio generated successfully`);
+      console.log(`Audio generated successfully`);
       console.log(`   Size: ${audioBuffer.length} bytes`);
       console.log(`   Format: WAV`);
   
@@ -108,19 +101,17 @@ async textToSpeech(
       };
   
     } catch (error: any) {
-      console.error('\n❌ CHIMEGE TTS ERROR:', error.message);
+      console.error('\n CHIMEGE TTS ERROR:', error.message);
       
       if (axios.isAxiosError(error)) {
         const errorData = error.response?.data;
         
-        // If error is buffer, convert to string
         if (errorData instanceof Buffer) {
           const errorMessage = errorData.toString('utf-8');
           console.error('Error details:', errorMessage);
           throw new Error(`Audio generation failed: ${errorMessage}`);
         }
         
-        // Log full error details
         console.error('Error status:', error.response?.status);
         console.error('Error headers:', error.response?.headers);
         console.error('Error data:', errorData);
@@ -132,53 +123,35 @@ async textToSpeech(
     }
   }
 
-/**
- * ✅ ULTRA-STRICT: Clean text for Chimege API
- * Only allow explicitly safe characters per API documentation
- */
 private cleanTextForChimege(text: string): string {
     let cleaned = text;
   
-    // 1. Unicode normalization - convert to NFC form
     cleaned = cleaned.normalize('NFC');
-  
-    // 2. Normalize whitespace first
+
     cleaned = cleaned.trim().replace(/\s+/g, ' ');
   
-    // 3. ✅ STRICT WHITELIST based on API docs:
-    // - Cyrillic letters (Russian + Mongolian extensions)
-    // - Spaces
-    // - Punctuation: ? ! . - ' " : ,
-    // Remove EVERYTHING else
     cleaned = cleaned.replace(
       /[^А-ЯЁа-яёӨөҮүҢң\s?!.\-'":,]/g, 
       ''
     );
+    cleaned = cleaned.replace(/[«»""'']/g, '"'); 
+    cleaned = cleaned.replace(/[‚„]/g, "'");      
   
-    // 4. Remove problematic quote variations - use only basic ASCII quotes
-    cleaned = cleaned.replace(/[«»""'']/g, '"');  // Smart quotes to straight
-    cleaned = cleaned.replace(/[‚„]/g, "'");      // Other quote variants
-  
-    // 5. Clean multiple punctuation
     cleaned = cleaned.replace(/([?!.,:])\1+/g, '$1');
   
-    // 6. Fix spacing around punctuation
     cleaned = cleaned.replace(/\s+([?!.,:])/g, '$1');
     cleaned = cleaned.replace(/([?!.,:])\s*/g, '$1 ');
   
-    // 7. Remove punctuation at start/end
     cleaned = cleaned.replace(/^[?!.,:\-\s]+|[?!.,:\-\s]+$/g, '');
   
-    // 8. Final whitespace cleanup
+
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
   
-    // 9. Safety check
     if (!cleaned || cleaned.length === 0) {
       console.warn('⚠️ Text became empty after cleaning. Original:', text);
       return 'Текст хоосон байна.';
     }
   
-    // 10. ✅ Final validation - ensure no forbidden characters remain
     const forbiddenChars = cleaned.match(/[^А-ЯЁа-яёӨөҮүҢң\s?!.\-'":,]/g);
     if (forbiddenChars) {
       console.warn('⚠️ Forbidden characters found:', forbiddenChars);
@@ -190,15 +163,12 @@ private cleanTextForChimege(text: string): string {
     return cleaned;
   }
 
-  /**
-   * Test method to verify text cleaning
-   */
   async testCleaning(text: string): Promise<string> {
     console.log('=== CLEANING TEST ===');
     console.log('Original:', text);
     console.log('Original length:', text.length);
     
-    // Show original characters
+
     console.log('\n--- ORIGINAL CHARACTERS ---');
     for (let i = 0; i < Math.min(text.length, 50); i++) {
       const char = text[i];
@@ -214,7 +184,7 @@ private cleanTextForChimege(text: string): string {
     console.log('Cleaned:', cleaned);
     console.log('Cleaned length:', cleaned.length);
     
-    // Validation checks
+
     const tests = {
       'Has Latin letters': /[a-zA-Z]/.test(cleaned),
       'Has numbers': /\d/.test(cleaned),
@@ -226,17 +196,14 @@ private cleanTextForChimege(text: string): string {
     
     if (tests['Has forbidden Unicode']) {
       const forbidden = cleaned.match(/[^А-ЯЁа-яёӨөҮүҢң\s?!.\-'":,]/g);
-      console.log('❌ Forbidden chars:', forbidden);
+      console.log('Forbidden chars:', forbidden);
     } else {
-      console.log('✅ All characters are allowed');
+      console.log('All characters are allowed');
     }
     
     return cleaned;
   }
 
-  /**
-   * Generate audio from script narration
-   */
   async generateFromScript(
     narration: string,
     options?: ChimegeOptions

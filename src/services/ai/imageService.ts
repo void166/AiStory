@@ -1,4 +1,3 @@
-// services/ai/imageService.ts
 import client from 'magic-hour';
 
 interface ScriptScene {
@@ -44,9 +43,6 @@ class ImageService {
     });
   }
 
-  /**
-   * Generate images for all scenes
-   */
   async generateFromScript(
     scenes: ScriptScene[],
     backgroundImages: BackgroundImage[]
@@ -61,10 +57,10 @@ class ImageService {
       try {
         console.log(`[${i + 1}/${scenes.length}] Generating image for scene: ${scene.time}`);
 
-        // Find matching background prompt
+
         const bgImage = this.findMatchingBackground(scene, backgroundImages);
 
-        // Generate image
+
         const imageUrl = await this.generateSingle(
           scene,
           bgImage?.prompt,
@@ -88,10 +84,10 @@ class ImageService {
       } catch (error: any) {
         console.error(`Failed to generate image for scene ${scene.time}:`, error.message);
         
-        // Add placeholder
+
         results.push({
           sceneTime: scene.time,
-          imageUrl: '', // Empty = failed
+          imageUrl: '', 
           prompt: scene.description,
           generatedAt: new Date()
         });
@@ -103,9 +99,7 @@ class ImageService {
     return results;
   }
 
-  /**
-   * Generate single image
-   */
+
   async generateSingle(
     scene: ScriptScene,
     customPrompt?: string,
@@ -120,9 +114,9 @@ class ImageService {
 
         console.log(`Attempt ${attempt}/${maxRetries}: ${prompt.substring(0, 50)}...`);
 
-        // ✅ FIX: Build complete style object with required prompt field
+
         const styleConfig = {
-          prompt: customStyle?.prompt || prompt, // ✅ Required field
+          prompt: customStyle?.prompt || prompt, 
           type: customStyle?.type || 'cinematic',
           intensity: customStyle?.intensity || 0.8
         };
@@ -153,7 +147,7 @@ class ImageService {
           continue;
         }
 
-        // Handle content policy violation
+
         if (error.status === 400 && error.message?.includes('content policy')) {
           console.log('Content policy violation. Trying safer prompt...');
           
@@ -179,12 +173,11 @@ class ImageService {
           return response.data[0].url;
         }
 
-        // If last retry, throw
+
         if (attempt === maxRetries) {
           break;
         }
 
-        // Wait before retry
         await this.delay(1000);
       }
     }
@@ -192,16 +185,14 @@ class ImageService {
     throw new Error(`Image generation failed after ${maxRetries} attempts: ${lastError?.message || JSON.stringify(lastError)}`);
   }
 
-  /**
-   * Generate single image from custom prompt
-   */
+
   async generateCustom(
     prompt: string,
     options?: ImageGenerationOptions
   ): Promise<string> {
     try {
       const styleConfig = {
-        prompt: options?.style?.prompt || prompt, // ✅ Required
+        prompt: options?.style?.prompt || prompt, 
         type: options?.style?.type || 'cinematic',
         intensity: options?.style?.intensity || 0.8
       };
@@ -226,16 +217,12 @@ class ImageService {
     }
   }
 
-  /**
-   * Build detailed prompt from scene
-   */
+
   private buildPrompt(scene: ScriptScene): string {
     return `${scene.scene}. ${scene.description}. Cinematic lighting, high quality, detailed, atmospheric, professional photography.`;
   }
 
-  /**
-   * Find matching background image
-   */
+
   private findMatchingBackground(
     scene: ScriptScene,
     backgroundImages: BackgroundImage[]
@@ -244,7 +231,7 @@ class ImageService {
       return undefined;
     }
 
-    // Parse time (e.g., "0-5" -> 0)
+
     const timeMatch = scene.time.match(/^(\d+)-/);
     if (!timeMatch) return backgroundImages[0];
 
@@ -256,9 +243,6 @@ class ImageService {
     return backgroundImages[imageIndex] || backgroundImages[backgroundImages.length - 1];
   }
 
-  /**
-   * Sanitize prompt to avoid content policy violations
-   */
   private sanitizePrompt(prompt: string): string {
     const sensitiveWords = [
       'blood', 'gore', 'violent', 'explicit', 'nude', 
@@ -272,15 +256,11 @@ class ImageService {
       sanitized = sanitized.replace(regex, '');
     });
 
-    // Add safe terms
     sanitized += ' Safe for work, appropriate, artistic';
 
     return sanitized;
   }
 
-  /**
-   * Batch generation with parallel processing
-   */
   async generateBatch(
     scenes: ScriptScene[],
     backgroundImages: BackgroundImage[],
@@ -325,7 +305,7 @@ class ImageService {
       
       results.push(...validResults);
 
-      // Wait between batches
+
       if (i + batchSize < scenes.length) {
         console.log('Waiting 2s before next batch...');
         await this.delay(2000);
@@ -335,9 +315,6 @@ class ImageService {
     return results;
   }
 
-  /**
-   * Delay helper
-   */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }

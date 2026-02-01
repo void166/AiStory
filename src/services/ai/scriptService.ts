@@ -28,9 +28,7 @@ class ScriptService {
     });
   }
 
-  /**
-   * Generate script from topic
-   */
+
   async generate(topic: string, options?: {
     duration?: number;
     genre?: string;
@@ -40,16 +38,12 @@ class ScriptService {
     const genre = options?.genre || 'horror';
     const language = options?.language || 'English';
 
-    // Build prompt
     const prompt = this.buildPrompt(topic, duration, genre, language);
 
-    // Call AI
     const aiResponse = await this.callGroqAPI(prompt);
 
-    // Parse response
     const scriptData = this.parseResponse(aiResponse);
 
-    // Validate
     this.validateScript(scriptData);
 
     return scriptData;
@@ -102,9 +96,7 @@ Topic: ${topic}
     `.trim();
   }
 
-  /**
-   * Call Groq API
-   */
+
   private async callGroqAPI(prompt: string): Promise<string> {
     try {
       const chat = await this.groq.chat.completions.create({
@@ -139,19 +131,16 @@ Topic: ${topic}
     }
   }
 
-  /**
-   * Parse and clean AI response
-   */
+
   private parseResponse(response: string): ScriptResponse {
     try {
-      // Clean markdown and extra text
       let cleaned = response.trim();
 
-      // Remove markdown code blocks
+
       cleaned = cleaned.replace(/```json\n?/gi, '');
       cleaned = cleaned.replace(/```\n?/gi, '');
 
-      // Find first { and last }
+
       const firstBrace = cleaned.indexOf('{');
       const lastBrace = cleaned.lastIndexOf('}');
 
@@ -161,7 +150,6 @@ Topic: ${topic}
 
       cleaned = cleaned.substring(firstBrace, lastBrace + 1);
 
-      // Parse JSON
       const parsed = JSON.parse(cleaned);
 
       return parsed as ScriptResponse;
@@ -173,9 +161,6 @@ Topic: ${topic}
     }
   }
 
-  /**
-   * Validate script structure
-   */
   private validateScript(script: any): void {
     if (!script) {
       throw new Error('Script is null or undefined');
@@ -201,7 +186,7 @@ Topic: ${topic}
       throw new Error('Script.backgroundImages must be an array');
     }
 
-    // Validate each scene
+
     script.script.forEach((scene: any, index: number) => {
       if (!scene.time || !scene.scene || !scene.description) {
         throw new Error(`Scene ${index + 1} is missing required fields`);
@@ -209,9 +194,6 @@ Topic: ${topic}
     });
   }
 
-  /**
-   * Regenerate specific scene
-   */
   async regenerateScene(
     originalScript: ScriptResponse,
     sceneIndex: number,
@@ -242,14 +224,14 @@ Topic: ${topic}
   
     try {
       const response = await this.callGroqAPI(prompt);
-      console.log('API Response:', response); // Debug log
+      console.log('API Response:', response); 
   
-      // Try to parse the response
+
       let parsed;
       try {
         parsed = JSON.parse(response);
       } catch (parseError) {
-        // If it's not pure JSON, extract JSON from text
+
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           parsed = JSON.parse(jsonMatch[0]);
@@ -258,17 +240,14 @@ Topic: ${topic}
         }
       }
   
-      console.log('Parsed response:', parsed); // Debug log
+      console.log('Parsed response:', parsed); 
   
-      // Check if we got the expected structure
       if (parsed.time && parsed.scene && parsed.description) {
-        return parsed; // Direct object structure
+        return parsed; 
       } 
-      // If it's wrapped in a script array
       else if (parsed.script && Array.isArray(parsed.script) && parsed.script[0]) {
         return parsed.script[0];
       }
-      // If it's in a data property
       else if (parsed.data && parsed.data.time && parsed.data.scene && parsed.data.description) {
         return parsed.data;
       }
