@@ -13,5 +13,9 @@ export const config = {
     FRONTEND_URL: process.env.FRONTEND_URL!,
     GROQ_API: process.env.GROQ_API || "",
     MAGICHOUR_API: process.env.MAGICHOUR_API || "",
-    NANO_BANANA_API: process.env.NANO_BANANA_API || ""
+    NANO_BANANA_API: process.env.NANO_BANANA_API || "",
+    CHIMEGE_VOICE_API: process.env.CHIMEGE_VOICE_API || "",
+    CLOUDNAME: process.env.CLOUDNAME || "",
+    CLOUD_API_KEY: process.env.CLOUD_API_KEY || "",
+    CLOUD_API_SECRET: process.env.CLOUD_API_SECRET || "",
 }

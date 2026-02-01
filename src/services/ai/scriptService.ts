@@ -55,9 +55,7 @@ class ScriptService {
     return scriptData;
   }
 
-  /**
-   * Build prompt for AI
-   */
+
   private buildPrompt(
     topic: string, 
     duration: number, 
@@ -224,26 +222,64 @@ Topic: ${topic}
     if (!scene) {
       throw new Error(`Scene ${sceneIndex} not found`);
     }
-
+  
     const prompt = customPrompt || `
-Rewrite this scene in a different way:
-
-Time: ${scene.time}
-Original: ${scene.scene}
-Description: ${scene.description}
-
-Return JSON:
-{
-  "time": "${scene.time}",
-  "scene": "New scene description",
-  "description": "New detailed description"
-}
-    `.trim();
-
-    const response = await this.callGroqAPI(prompt);
-    const parsed = this.parseResponse(response);
-
-    return parsed.script[0];
+  Rewrite this scene in a different way:
+  
+  Time: ${scene.time}
+  Original Scene: ${scene.scene}
+  Original Description: ${scene.description}
+  
+  Return ONLY valid JSON with this exact structure:
+  {
+    "time": "${scene.time}",
+    "scene": "New scene description here",
+    "description": "New detailed description here"
+  }
+  
+  IMPORTANT: Return ONLY the JSON object, no other text.
+      `.trim();
+  
+    try {
+      const response = await this.callGroqAPI(prompt);
+      console.log('API Response:', response); // Debug log
+  
+      // Try to parse the response
+      let parsed;
+      try {
+        parsed = JSON.parse(response);
+      } catch (parseError) {
+        // If it's not pure JSON, extract JSON from text
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error('Failed to parse JSON from API response');
+        }
+      }
+  
+      console.log('Parsed response:', parsed); // Debug log
+  
+      // Check if we got the expected structure
+      if (parsed.time && parsed.scene && parsed.description) {
+        return parsed; // Direct object structure
+      } 
+      // If it's wrapped in a script array
+      else if (parsed.script && Array.isArray(parsed.script) && parsed.script[0]) {
+        return parsed.script[0];
+      }
+      // If it's in a data property
+      else if (parsed.data && parsed.data.time && parsed.data.scene && parsed.data.description) {
+        return parsed.data;
+      }
+      else {
+        throw new Error('Unexpected response structure from API');
+      }
+  
+    } catch (error: any) {
+      console.error('Error in regenerateScene:', error);
+      throw new Error(`Failed to regenerate scene: ${error.message}`);
+    }
   }
 }
 

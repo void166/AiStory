@@ -7,13 +7,13 @@ const router = express.Router();
 
 // Generate script
 router.post('/generate', 
-  authMiddleware, 
+
   aiScriptController.generateScript.bind(aiScriptController)
 );
 
 // Regenerate specific scene
 router.post('/regenerate-scene',
-  authMiddleware,
+
   aiScriptController.regenerateScene.bind(aiScriptController)
 );
 

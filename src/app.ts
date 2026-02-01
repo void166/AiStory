@@ -5,7 +5,9 @@ import sequelize from "./config/db";
 import authRouter from "./routes/authRoutes";
 import projectRouter from "./routes/projectRoutes";
 import aiImageRoutes from './routes/aiImageRoutes'
-import scriptRoutes from './routes/scriptRoutes'
+import scriptRoutes from './routes/scriptRoutes'// app.ts
+import audioRoute from './routes/audioRoute'
+
 
 const app = express();
 
@@ -17,6 +19,7 @@ app.use("/api",projectRouter);
 app.use('/api', scriptRoutes);
 app.use("/api/ai/image", aiImageRoutes);
 app.use("/api/ai/script", scriptRoutes);
+app.use('/api/audio', audioRoute);
 
 
 (async ()=>{
