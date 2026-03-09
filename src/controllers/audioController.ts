@@ -20,7 +20,7 @@ async generateAudio(req: Request, res: Response) {
     console.log('Generating audiosda...');
 
     // Generate audio with options
-    const result = await audioService.textToSpeech(text, {
+    const result = await audioService.textToSpeechEleven(text, {
       voice_id,
       speed,
       pitch,

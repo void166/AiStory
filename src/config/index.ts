@@ -18,4 +18,7 @@ export const config = {
     CLOUDNAME: process.env.CLOUDNAME || "",
     CLOUD_API_KEY: process.env.CLOUD_API_KEY || "",
     CLOUD_API_SECRET: process.env.CLOUD_API_SECRET || "",
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
+    ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || "",
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY || ""
 }
