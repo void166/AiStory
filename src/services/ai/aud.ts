@@ -9,7 +9,6 @@ interface AudioGenerationResult {
   audioUrl?: string;
   duration?: number;
   format: string;
-  // ── Subtitle-д ашиглах timestamp ──────────────────────────────────────────
   words?: WordTiming[];
 }
 
@@ -26,7 +25,7 @@ interface ChimegeOptions {
   sample_rate?: number;
 }
 
-const WORDS_PER_LINE = 1; // word-by-word: 1 үг тутамд subtitle солигдоно
+const WORDS_PER_LINE = 1; 
 
 class AudioService {
   private apiUrl: string;
@@ -169,7 +168,7 @@ class AudioService {
         response.alignment ?? (response as any).normalized_alignment
       );
 
-      // duration: сүүлийн үгний end time эсвэл bitrate-с тооцно
+
       const duration = words.length > 0
         ? words[words.length - 1].end
         : parseFloat(((audioBuffer.length * 8) / (128 * 1000)).toFixed(2));

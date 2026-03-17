@@ -434,7 +434,7 @@ aiResponse = await this.callGroqAPI(prompt);
     const content = chat.choices[0]?.message?.content;
     if (!content) throw new Error('Empty response from Groq');
 
-    console.log(`✅ Response: ${content.length} chars`);
+    console.log(`Response: ${content.length} chars`);
     return content;
   }
 

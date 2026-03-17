@@ -508,6 +508,7 @@ class VideoService {
           }
         } catch (error: any) {
           console.error(`    ✗ Image preparation failed: ${error.message}`);
+          imagePath = undefined;
         }
       } else {
         console.warn(`    ⚠️  No image URL for scene ${i + 1} - skipping`);
@@ -534,9 +535,10 @@ class VideoService {
           // This is always more accurate than the API-reported duration.
           const probed = await this.probeAudioDuration(audioPath);
           if (probed > 0) {
-            // Add a small tail so the image doesn't cut off on the last syllable
-            sceneDuration = probed + 0.3;
-            console.log(`    ✓ Probed duration: ${probed.toFixed(2)}s (+0.3s tail → ${sceneDuration.toFixed(2)}s)`);
+            // Add tail equal to FADE_DURATION so xfade overlap never eats into audio.
+            // Without this the last scene's final words get cut off.
+            sceneDuration = probed + FADE_DURATION;
+            console.log(`    ✓ Probed duration: ${probed.toFixed(2)}s (+${FADE_DURATION}s tail → ${sceneDuration.toFixed(2)}s)`);
           } else {
             // ffprobe failed — fall back to API value, clamp to minimum
             const fallback = scene.audioDuration ?? 0;
@@ -613,56 +615,53 @@ class VideoService {
     srtPath?: string
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+
+      // ── Per-clip filter: scale to fill, crop to exact output size ───────────
       const scaleFilter =
         `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,` +
         `crop=${OUT_W}:${OUT_H},setsar=1,fps=30`;
 
-      // ── Subtitle filter applied to the FINAL concatenated stream only ────────
-      // Applying it per-clip would show subtitles at wrong timestamps (each clip
-      // restarts at 0), so we attach it to [outv] after the xfade chain.
-      // SRT path: on Windows escape colons; on Linux/Mac no change needed.
+      // ── Transition types (cycle through scene pairs) ────────────────────────
+      const transitionTypes = ['fade', 'fadeblack', 'wiperight', 'wipeleft',
+                               'slideright', 'slideleft', 'fade', 'fadeblack'];
+
+      // ── Subtitle filter (applied to FINAL concatenated stream only) ─────────
+      // No background box — white text with black outline for readability.
       const srtEscaped = srtPath
         ? srtPath.replace(/\\/g, "/").replace(/:/g, "\\:")
         : null;
-      // Subtitle style — 1080×1920 portrait, word-by-word, голд (middle-center)
-      // Alignment=5  → SSA numpad: дунд-голд (middle-center)
-      // FontSize=22   → 1080p portrait-д тохирсон хэмжээ
-      // PrimaryColour  &H00FFFF00 = yellow  (AABBGGRR little-endian hex)
-      // OutlineColour  &H00000000 = black
-      // ShadowColour   &H80000000 = half-transparent black shadow
-      // Outline=3, Shadow=1 → тод харагдах outline + shadow
       const subtitleFilterStr = srtEscaped
         ? `subtitles='${srtEscaped}':` +
-          `force_style='FontName=Arial,FontSize=16,Bold=1,` +
-          `PrimaryColour=&H00FFFF00,OutlineColour=&H00000000,` +
-          `ShadowColour=&H80000000,Outline=3,Shadow=1,` +
-          `Alignment=2,MarginV=150'`
-        : null;
-
-      // Per-clip filter: scale only (no subtitles)
-      const fullFilter = scaleFilter;
+          `force_style='FontName=Arial,FontSize=18,Bold=1,` +
+          `PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,` +
+          `ShadowColour=&H80000000,BorderStyle=1,Outline=3,Shadow=1,` +
+          `Alignment=2,MarginV=60'`
+        : "";
 
       let command = ffmpeg();
 
+      // ── Single-scene path ──────────────────────────────────────────────────
       if (mediaFiles.length === 1) {
         command
           .input(mediaFiles[0].image)
           .inputOptions(["-loop", "1", "-t", mediaFiles[0].duration.toString()]);
-
         if (mediaFiles[0].audio) command.input(mediaFiles[0].audio);
 
-        // For single scene, apply subtitle directly via -vf (correct global time)
         const singleVf = subtitleFilterStr
-          ? `${fullFilter},${subtitleFilterStr}`
-          : fullFilter;
-        command.outputOptions(["-map", "0:v", "-vf", singleVf]);
-        if (mediaFiles[0].audio) command.outputOptions(["-map", "1:a"]);
+          ? `${scaleFilter},${subtitleFilterStr}`
+          : scaleFilter;
 
+        command.outputOptions(["-map", "0:v", "-vf", singleVf]);
+        if (mediaFiles[0].audio) command.outputOptions(["-map", "1:a", "-shortest"]);
+
+      // ── Multi-scene path ───────────────────────────────────────────────────
       } else {
+        // Image inputs with -loop -t so each clip is exactly the scene duration
         mediaFiles.forEach((m) => {
           command.input(m.image).inputOptions(["-loop", "1", "-t", m.duration.toString()]);
         });
 
+        // Audio inputs
         const audioSceneIndices: number[] = [];
         mediaFiles.forEach((m, i) => {
           if (m.audio) { command.input(m.audio); audioSceneIndices.push(i); }
@@ -671,28 +670,30 @@ class VideoService {
         const N = mediaFiles.length;
         let filterComplex = "";
 
-        // Per-clip: scale only
+        // Per-clip: scale + crop
         for (let i = 0; i < N; i++) {
-          filterComplex += `[${i}:v]${fullFilter}[sv${i}];`;
+          filterComplex += `[${i}:v]${scaleFilter}[sv${i}];`;
         }
 
+        // xfade transition chain with varied effects
         let cumulativeDuration = 0;
         let prev = "sv0";
 
         for (let i = 1; i < N; i++) {
           cumulativeDuration += mediaFiles[i - 1].duration;
           const offset = Math.max(0, cumulativeDuration - FADE_DURATION * i);
-          // Last xfade outputs [outv_raw] so we can attach the subtitle filter after
+          const transition = transitionTypes[(i - 1) % transitionTypes.length];
           const out = i === N - 1 ? (subtitleFilterStr ? "outv_raw" : "outv") : `v${i}`;
-          filterComplex += `[${prev}][sv${i}]xfade=transition=fade:duration=${FADE_DURATION}:offset=${offset}[${out}];`;
+          filterComplex += `[${prev}][sv${i}]xfade=transition=${transition}:duration=${FADE_DURATION}:offset=${offset}[${out}];`;
           prev = out;
         }
 
-        // Apply subtitle filter to final stream (correct global timestamps)
+        // Subtitle filter on the final concatenated stream
         if (subtitleFilterStr) {
           filterComplex += `[outv_raw]${subtitleFilterStr}[outv];`;
         }
 
+        // Audio concat
         if (audioSceneIndices.length > 0) {
           const labels = audioSceneIndices.map((_, idx) => `[${N + idx}:a]`).join("");
           filterComplex += `${labels}concat=n=${audioSceneIndices.length}:v=0:a=1[outa]`;

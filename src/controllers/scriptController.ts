@@ -11,7 +11,7 @@ export class ScriptController {
     try {
       const { topic, duration, genre, language, imageStyle } = req.body;
 
-      // Validation
+
       if (!topic || topic.trim() === '') {
         return res.status(400).json({
           success: false,
