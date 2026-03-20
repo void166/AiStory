@@ -1,69 +1,102 @@
+// ─────────────────────────────────────────────────────────────────────────────
 // services/videoService.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
 import scriptService from "./scriptService";
 import audioService from "./aud";
 import imageService from "./imageService";
 import ffmpeg from "fluent-ffmpeg";
-import { WordTiming } from "./aud"; 
+import { WordTiming } from "./aud";
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 import axios from "axios";
 
-const mkdir = promisify(fs.mkdir);
+import {
+  OUT_W,
+  OUT_H,
+  FPS,
+  TransitionPreset,
+  SceneEffectConfig,
+  SubtitleStyle,
+  assignSceneEffects,
+  buildSceneFilter,
+  buildSubtitleFilter,
+} from "./effects";
+
+const mkdir    = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
-const unlink = promisify(fs.unlink);
-const readdir = promisify(fs.readdir);
+const unlink   = promisify(fs.unlink);
+const readdir  = promisify(fs.readdir);
 
-// ─── Minimum seconds a scene will occupy in the final video ───────────────────
-const MIN_SCENE_DURATION = 5; // seconds
-const FADE_DURATION = 0.5;    // seconds (xfade overlap)
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-// ─── Output resolution (vertical / portrait) ──────────────────────────────────
-const OUT_W = 1080;
-const OUT_H = 1920;
+const MIN_SCENE_DURATION = 5;  // seconds — floor when there is no audio
+const FADE_DURATION      = 0.5; // seconds — xfade overlap between clips
 
-interface VideoGenerationOptions {
-  duration?: number;
-  genre?: string;
-  language?: string;
-  imageStyle?: string;
-  voiceId?: string;
-  outputPath?: string;
+
+
+export interface VideoGenerationOptions {
+  duration?:     number;
+  /** 'scary' | 'education' | 'vintage' | 'cinematic'  (default: 'cinematic') */
+  genre?:        string;
+  language?:     string;
+  imageStyle?:   string;
+  voiceId?:      string;
+  outputPath?:   string;
+
+  // ── Effect overrides exposed to callers ──────────────────────────────────
+  /** Force the same transition for every scene instead of auto-selecting */
+  globalTransition?: TransitionPreset;
+  /**
+   * Per-scene effect overrides; index matches the scene order.
+   * Unspecified fields fall back to auto-assigned values.
+   */
+  sceneEffects?: Partial<SceneEffectConfig>[];
+
+  // ── Subtitle options ─────────────────────────────────────────────────────
+  subtitleStyle?:    SubtitleStyle;
+  disableSubtitles?: boolean;
 }
 
 interface SceneWithMedia {
-  time: string;
-  scene: string;
-  visual: string;
-  narration: string;
-  imagePrompt: string;
-  audioUrl?: string;
-  imageUrl?: string;
+  time:          string;
+  scene:         string;
+  visual:        string;
+  narration:     string;
+  imagePrompt:   string;
+  audioUrl?:     string;
+  imageUrl?:     string;
   audioDuration?: number;
-  words?: WordTiming[];
+  words?:        WordTiming[];
 }
 
 interface VideoGenerationResult {
-  videoId: string;
-  title: string;
-  duration: string;
-  scenes: SceneWithMedia[];
-  status: "processing" | "completed" | "failed";
-  progress: number;
+  videoId:   string;
+  title:     string;
+  duration:  string;
+  scenes:    SceneWithMedia[];
+  status:    "processing" | "completed" | "failed";
+  progress:  number;
   createdAt: Date;
   videoPath?: string;
-  videoUrl?: string;
-  srtPath?: string;
+  videoUrl?:  string;
+  srtPath?:   string;
 }
 
+/** Internal per-clip descriptor passed to the FFmpeg assembler */
 interface MediaFile {
-  image: string;
-  audio?: string;
+  image:    string;
+  audio?:   string;
   duration: number;
+  /** Forwarded from the scene so effects.ts can derive impact */
+  narration: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class VideoService {
-  private tempDir = path.join(process.cwd(), "temp");
+  private tempDir   = path.join(process.cwd(), "temp");
   private outputDir = path.join(process.cwd(), "output");
 
   constructor() {
@@ -74,7 +107,7 @@ class VideoService {
 
   private async ensureDirectories() {
     try {
-      await mkdir(this.tempDir, { recursive: true });
+      await mkdir(this.tempDir,   { recursive: true });
       await mkdir(this.outputDir, { recursive: true });
     } catch (error) {
       console.error("Error creating directories:", error);
@@ -84,89 +117,84 @@ class VideoService {
   // ─── Public API ─────────────────────────────────────────────────────────────
 
   async generateVideos(
-    topic: string,
-    options: VideoGenerationOptions = {}
+    topic:   string,
+    options: VideoGenerationOptions = {},
   ): Promise<VideoGenerationResult> {
     const videoId = this.generateVideoId();
 
     try {
-      console.log(`starting video gen: ${videoId}`);
+      console.log(`Starting video gen: ${videoId}`);
       console.log(`Topic: ${topic}`);
       console.log(`Options:`, options);
 
-      console.log("script gen started...");
+      console.log("Script gen started...");
       const script = await scriptService.generate(
         topic,
         options.imageStyle || "anime",
         {
           duration: options.duration || 60,
-          genre: options.genre || "scary",
+          genre:    options.genre    || "cinematic",
           language: options.language || "en",
-        }
+        },
       );
+      console.log(`Script generated: ${script.script.length} scenes`);
 
-      console.log(`script generated: ${script.script.length} scenes`);
-
-      // scene бүрд audio + image үүсгэнэ.
-      // Audio: ElevenLabs зэрэг хүсэлт 3-аас хэтрэхгүй байх тул дараалан боловсруулна.
-      // Image: concurrency хязгааргүй тул бүгдийг зэрэг эхлүүлнэ.
+      // Start all image generations in parallel
       const imagePromises = script.script.map((scene) =>
         imageService.generateSingle(
-          {
-            time: scene.time,
-            scene: scene.scene,
-            description: scene.imagePrompt || scene.visual,
-          },
-          scene.imagePrompt || scene.visual
-        )
+          { time: scene.time, scene: scene.scene, description: scene.imagePrompt || scene.visual },
+          scene.imagePrompt || scene.visual,
+        ),
       );
 
+      // Generate audio sequentially (API rate-limit safe)
       const processedScenes: SceneWithMedia[] = [];
-
-      for (let index = 0; index < script.script.length; index++) {
-        const scene = script.script[index];
-        console.log(
-          `[${index + 1}/${script.script.length}] Processing scene: ${scene.time}`
-        );
-
+      for (let i = 0; i < script.script.length; i++) {
+        const scene = script.script[i];
+        console.log(`[${i + 1}/${script.script.length}] Processing scene: ${scene.time}`);
         const audioResults = await this.generateAudioForScenes([scene], options.voiceId);
         processedScenes.push({ ...audioResults[0] } as SceneWithMedia);
       }
 
       // Attach image URLs once all image generations settle
-      const imageUrls = await Promise.allSettled(imagePromises);
-      imageUrls.forEach((result, index) => {
+      const imageResults = await Promise.allSettled(imagePromises);
+      imageResults.forEach((result, index) => {
         if (result.status === "fulfilled") {
           processedScenes[index].imageUrl = result.value ?? undefined;
         } else {
-          console.warn(`  ⚠️  Image failed for scene ${index + 1}:`, result.reason?.message);
+          console.warn(
+            `  ⚠️  Image failed for scene ${index + 1}:`,
+            result.reason?.message,
+          );
         }
       });
 
-
-      const srtPath =  await this.generateSRT(videoId, processedScenes);
+      const srtPath = options.disableSubtitles
+        ? undefined
+        : await this.generateSRT(videoId, processedScenes);
 
       console.log(
-        `All scenes processed: ${processedScenes.filter((s) => s.imageUrl).length}/${script.script.length} with images`
+        `All scenes processed: ${processedScenes.filter((s) => s.imageUrl).length}/${script.script.length} with images`,
       );
 
       const videoPath = await this.assembleVideo(
         videoId,
         processedScenes,
         script.title,
-        srtPath
+        srtPath,
+        options,
       );
 
       return {
         videoId,
-        title: script.title,
-        duration: script.duration,
-        scenes: processedScenes,
-        status: "completed",
-        progress: 100,
+        title:     script.title,
+        duration:  script.duration,
+        scenes:    processedScenes,
+        status:    "completed",
+        progress:  100,
         createdAt: new Date(),
         videoPath,
-        srtPath
+        srtPath,
       };
     } catch (err: any) {
       console.error(`Video generation failed: ${err.message}`);
@@ -174,85 +202,15 @@ class VideoService {
     }
   }
 
-  // async generateVideo(
-  //   topic: string,
-  //   options: VideoGenerationOptions = {}
-  // ): Promise<VideoGenerationResult> {
-  //   const videoId = this.generateVideoId();
-
-  //   try {
-  //     console.log(`\n🎬 Starting video generation: ${videoId}`);
-  //     console.log(`Topic: ${topic}`);
-  //     console.log(`Options:`, options);
-
-  //     // STEP 1: Generate Script
-  //     console.log("\n📝 STEP 1/4: Generating script...");
-  //     const script = await scriptService.generate(
-  //       topic,
-  //       options.imageStyle || "anime",
-  //       {
-  //         duration: options.duration || 60,
-  //         genre: options.genre || "horror",
-  //         language: options.language || "mongolian",
-  //       }
-  //     );
-  //     console.log(`✅ Script generated: ${script.script.length} scenes`);
-
-  //     // STEP 2: Generate Audio
-  //     console.log("\n🎵 STEP 2/4: Generating audio...");
-  //     const scenesWithAudio = await this.generateAudioForScenes(
-  //       script.script,
-  //       options.voiceId
-  //     );
-  //     console.log(`✅ Audio generated for ${scenesWithAudio.length} scenes`);
-
-  //     // STEP 3: Generate Images
-  //     console.log("\n🖼️  STEP 3/4: Generating images...");
-  //     const scenesWithImages = await this.generateImagesForScenes(
-  //       scenesWithAudio,
-  //       script.backgroundImages
-  //     );
-  //     console.log(`✅ Images generated for ${scenesWithImages.length} scenes`);
-
-  //     // STEP 4: Assemble Video
-  //     console.log("\n🎞️  STEP 4/4: Assembling video...");
-  //     const videoPath = await this.assembleVideo(
-  //       videoId,
-  //       scenesWithImages,
-  //       script.title
-  //     );
-  //     console.log(`✅ Video assembled: ${videoPath}`);
-
-  //     const result: VideoGenerationResult = {
-  //       videoId,
-  //       title: script.title,
-  //       duration: script.duration,
-  //       scenes: scenesWithImages,
-  //       status: "completed",
-  //       progress: 100,
-  //       createdAt: new Date(),
-  //       videoPath,
-  //     };
-
-  //     console.log(`\n✨ Video generation completed: ${videoId}`);
-  //     console.log(`📁 Video saved to: ${videoPath}`);
-
-  //     return result;
-  //   } catch (error: any) {
-  //     console.error(`\n❌ Video generation failed: ${error.message}`);
-  //     throw new Error(`Video generation failed: ${error.message}`);
-  //   }
-  // }
-
   async getVideoStatus(videoId: string): Promise<VideoGenerationResult | null> {
     console.log(`Fetching video status: ${videoId}`);
     return null;
   }
 
   async regenerateSceneMedia(
-    _videoId: string,
-    _sceneIndex: number,
-    _regenerateWhat: "audio" | "image" | "both"
+    _videoId:        string,
+    _sceneIndex:     number,
+    _regenerateWhat: "audio" | "image" | "both",
   ): Promise<SceneWithMedia> {
     throw new Error("regenerateSceneMedia requires database integration");
   }
@@ -260,17 +218,15 @@ class VideoService {
   // ─── Audio generation ───────────────────────────────────────────────────────
 
   private async generateAudioForScenes(
-    scenes: any[],
-    voiceId?: string
+    scenes:   any[],
+    voiceId?: string,
   ): Promise<SceneWithMedia[]> {
-    const scenesWithAudio: SceneWithMedia[] = [];
+    const result: SceneWithMedia[] = [];
 
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
       try {
-        console.log(
-          `  [${i + 1}/${scenes.length}] Generating audio for: ${scene.time}`
-        );
+        console.log(`  [${i + 1}/${scenes.length}] Generating audio for: ${scene.time}`);
 
         const audioResult = await audioService.textToSpeechEleven(scene.narration, {
           voice_id: voiceId || "JBFqnCBsd6RMkjVDRZzb",
@@ -281,14 +237,14 @@ class VideoService {
         const filename = `audio_${this.generateVideoId()}_scene${i}`;
         const audioUrl = await audioService.uploadToCloudinary(
           audioResult.audioBuffer,
-          filename
+          filename,
         );
 
-        scenesWithAudio.push({
+        result.push({
           ...scene,
           audioUrl,
           audioDuration: audioResult.duration,
-          words: audioResult.words
+          words: audioResult.words,
         });
 
         console.log(`    ✓ Audio uploaded: ${audioUrl.substring(0, 50)}...`);
@@ -296,21 +252,20 @@ class VideoService {
 
         if (i < scenes.length - 1) await this.delay(500);
       } catch (error: any) {
-        console.error(
-          `    ✗ Audio generation failed for scene ${i + 1}: ${error.message}`
-        );
-        scenesWithAudio.push({
-          ...scene,
-          audioUrl: undefined,
-          audioDuration: undefined,
-        });
+        console.error(`    ✗ Audio generation failed for scene ${i + 1}: ${error.message}`);
+        result.push({ ...scene, audioUrl: undefined, audioDuration: undefined });
       }
     }
 
-    return scenesWithAudio;
+    return result;
   }
 
-  private async generateSRT(videoId: string, scenes: SceneWithMedia[]): Promise<string> {
+  // ─── SRT generation ─────────────────────────────────────────────────────────
+
+  private async generateSRT(
+    videoId: string,
+    scenes:  SceneWithMedia[],
+  ): Promise<string> {
     const srtPath = path.join(this.outputDir, `${videoId}.srt`);
 
     let timeOffset = 0;
@@ -321,9 +276,6 @@ class VideoService {
         const chunk = audioService.wordsToSRT(scene.words, timeOffset);
         if (chunk.trim()) chunks.push(chunk);
       }
-      
-      // MIN_SCENE_DURATION-ийг хасаж, зөвхөн аудионы бодит уртыг нэмнэ.
-      // Ингэснээр дуу болон текст яг цав таарна.
       timeOffset += scene.audioDuration ?? 0;
     }
 
@@ -338,60 +290,49 @@ class VideoService {
     let index = 1;
     return srt.replace(/^\d+$/gm, () => String(index++));
   }
-  // ─── Image generation ───────────────────────────────────────────────────────
+
+  // ─── Image generation (legacy path — kept for compatibility) ────────────────
 
   private async generateImagesForScenes(
-    scenes: SceneWithMedia[],
-    backgroundImages: any[]
+    scenes:           SceneWithMedia[],
+    backgroundImages: any[],
   ): Promise<SceneWithMedia[]> {
-    console.log(
-      `\n🖼️ Generating images using imageService.generateFromScript()...`
-    );
-
     try {
-      const scriptScenes = scenes.map((scene) => ({
-        time: scene.time,
-        scene: scene.scene,
-        description: scene.imagePrompt || scene.visual,
+      const scriptScenes = scenes.map((s) => ({
+        time:        s.time,
+        scene:       s.scene,
+        description: s.imagePrompt || s.visual,
       }));
 
       const generatedImages = await imageService.generateFromScript(
         scriptScenes,
-        backgroundImages
+        backgroundImages,
       );
 
-      const scenesWithImages: SceneWithMedia[] = scenes.map((scene, index) => {
-        const generatedImage = generatedImages.find(
-          (img) => img.sceneTime === scene.time
-        );
-
-        let imageUrl = generatedImage?.imageUrl;
+      const withImages: SceneWithMedia[] = scenes.map((scene, index) => {
+        const img = generatedImages.find((g) => g.sceneTime === scene.time);
+        let imageUrl = img?.imageUrl;
 
         if (imageUrl && !imageUrl.startsWith("http")) {
-          console.log(
-            `  ⚠️  Scene ${index + 1}: Got local path instead of URL: ${imageUrl}`
-          );
-          if (!path.isAbsolute(imageUrl)) {
-            imageUrl = path.resolve(imageUrl);
-          }
+          if (!path.isAbsolute(imageUrl)) imageUrl = path.resolve(imageUrl);
           console.log(`  ℹ️  Using absolute path: ${imageUrl}`);
         }
 
         return { ...scene, imageUrl: imageUrl || undefined };
       });
 
-      const successCount = scenesWithImages.filter((s) => s.imageUrl).length;
+      const successCount = withImages.filter((s) => s.imageUrl).length;
       console.log(`✅ Images: ${successCount}/${scenes.length} successful`);
 
-      return await this.uploadLocalImagesToCloudinary(scenesWithImages);
+      return this.uploadLocalImagesToCloudinary(withImages);
     } catch (error: any) {
-      console.error(`❌ Image generation error:`, error.message);
-      return scenes.map((scene) => ({ ...scene, imageUrl: undefined }));
+      console.error("❌ Image generation error:", error.message);
+      return scenes.map((s) => ({ ...s, imageUrl: undefined }));
     }
   }
 
   private async uploadLocalImagesToCloudinary(
-    scenes: SceneWithMedia[]
+    scenes: SceneWithMedia[],
   ): Promise<SceneWithMedia[]> {
     const cloudinary = require("cloudinary").v2;
 
@@ -401,50 +342,46 @@ class VideoService {
     }
 
     cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
+      cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
+      api_key:     process.env.CLOUDINARY_API_KEY,
+      api_secret:  process.env.CLOUDINARY_API_SECRET,
     });
 
-    const updatedScenes: SceneWithMedia[] = [];
+    const updated: SceneWithMedia[] = [];
 
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
 
       if (!scene.imageUrl || scene.imageUrl.startsWith("http")) {
-        updatedScenes.push(scene);
+        updated.push(scene);
         continue;
       }
 
       try {
-        console.log(
-          `  [${i + 1}/${scenes.length}] Uploading local image to Cloudinary...`
-        );
-        const uploadResult = await cloudinary.uploader.upload(scene.imageUrl, {
-          folder: "ai-generated-images",
+        console.log(`  [${i + 1}/${scenes.length}] Uploading local image to Cloudinary...`);
+        const result = await cloudinary.uploader.upload(scene.imageUrl, {
+          folder:        "ai-generated-images",
           resource_type: "image",
         });
-        console.log(
-          `    ✓ Uploaded: ${uploadResult.secure_url.substring(0, 50)}...`
-        );
-        updatedScenes.push({ ...scene, imageUrl: uploadResult.secure_url });
-      } catch (uploadError: any) {
-        console.error(`    ✗ Upload failed: ${uploadError.message}`);
-        console.log(`    ℹ️  Keeping local path: ${scene.imageUrl}`);
-        updatedScenes.push(scene);
+        console.log(`    ✓ Uploaded: ${result.secure_url.substring(0, 50)}...`);
+        updated.push({ ...scene, imageUrl: result.secure_url });
+      } catch (err: any) {
+        console.error(`    ✗ Upload failed: ${err.message}`);
+        updated.push(scene);
       }
     }
 
-    return updatedScenes;
+    return updated;
   }
 
   // ─── Video assembly ─────────────────────────────────────────────────────────
 
   private async assembleVideo(
-    videoId: string,
-    scenes: SceneWithMedia[],
-    title: string,
-    srtPath?: string
+    videoId:  string,
+    scenes:   SceneWithMedia[],
+    title:    string,
+    srtPath?: string,
+    options:  VideoGenerationOptions = {},
   ): Promise<string> {
     const tempVideoDir = path.join(this.tempDir, videoId);
     await mkdir(tempVideoDir, { recursive: true });
@@ -456,19 +393,21 @@ class VideoService {
       console.log("\n📊 Scene duration summary:");
       mediaFiles.forEach((m, i) => {
         console.log(
-          `  Scene ${i + 1}: ${m.duration}s  image=${path.basename(m.image)}  audio=${
-            m.audio ? path.basename(m.audio) : "none"
-          }`
+          `  Scene ${i + 1}: ${m.duration.toFixed(2)}s  ` +
+          `image=${path.basename(m.image)}  ` +
+          `audio=${m.audio ? path.basename(m.audio) : "none"}`,
         );
       });
+
       const totalDuration =
         mediaFiles.reduce((s, m) => s + m.duration, 0) -
         FADE_DURATION * (mediaFiles.length - 1);
       console.log(`  Expected video length: ~${totalDuration.toFixed(1)}s`);
 
       console.log(`\n🎬 Creating video with FFmpeg...`);
-      const outputPath = path.join(this.outputDir, `${videoId}.mp4`);
-      await this.createVideoWithFFmpeg(mediaFiles, outputPath, title, srtPath);
+      const outputPath = path.join(options.outputPath ?? this.outputDir, `${videoId}.mp4`);
+
+      await this.createVideoWithFFmpeg(mediaFiles, outputPath, title, srtPath, options);
 
       console.log(`\n✨ Video created successfully!`);
       await this.cleanupTempFiles(tempVideoDir);
@@ -481,8 +420,8 @@ class VideoService {
   }
 
   private async downloadSceneMedia(
-    scenes: SceneWithMedia[],
-    tempDir: string
+    scenes:  SceneWithMedia[],
+    tempDir: string,
   ): Promise<MediaFile[]> {
     const mediaFiles: MediaFile[] = [];
 
@@ -492,23 +431,23 @@ class VideoService {
 
       // ── Image ──────────────────────────────────────────────────────────────
       let imagePath: string | undefined;
+
       if (scene.imageUrl) {
         try {
           if (scene.imageUrl.startsWith("http")) {
             imagePath = path.join(tempDir, `scene_${i}_image.png`);
             await this.downloadFile(scene.imageUrl, imagePath);
             console.log(`    ✓ Image downloaded from URL`);
+          } else if (fs.existsSync(scene.imageUrl)) {
+            imagePath = path.isAbsolute(scene.imageUrl)
+              ? scene.imageUrl
+              : path.resolve(scene.imageUrl);
+            console.log(`    ✓ Using local image: ${imagePath}`);
           } else {
-            if (fs.existsSync(scene.imageUrl)) {
-              imagePath = scene.imageUrl;
-              console.log(`    ✓ Using local image: ${imagePath}`);
-            } else {
-              console.error(`    ✗ Local file not found: ${scene.imageUrl}`);
-            }
+            console.error(`    ✗ Local file not found: ${scene.imageUrl}`);
           }
-        } catch (error: any) {
-          console.error(`    ✗ Image preparation failed: ${error.message}`);
-          imagePath = undefined;
+        } catch (err: any) {
+          console.error(`    ✗ Image preparation failed: ${err.message}`);
         }
       } else {
         console.warn(`    ⚠️  No image URL for scene ${i + 1} - skipping`);
@@ -516,71 +455,71 @@ class VideoService {
 
       // ── Audio ──────────────────────────────────────────────────────────────
       let audioPath: string | undefined;
+
       if (scene.audioUrl) {
         try {
           audioPath = path.join(tempDir, `scene_${i}_audio.mp3`);
           await this.downloadFile(scene.audioUrl, audioPath);
           console.log(`    ✓ Audio downloaded`);
-        } catch (error: any) {
-          console.error(`    ✗ Audio download failed: ${error.message}`);
-          audioPath = undefined;
+        } catch (err: any) {
+          console.error(`    ✗ Audio download failed: ${err.message}`);
         }
       }
 
-      if (imagePath) {
-        let sceneDuration: number;
-
-        if (audioPath) {
-          // Ground-truth duration: probe the actual downloaded audio file.
-          // This is always more accurate than the API-reported duration.
-          const probed = await this.probeAudioDuration(audioPath);
-          if (probed > 0) {
-            // Add tail equal to FADE_DURATION so xfade overlap never eats into audio.
-            // Without this the last scene's final words get cut off.
-            sceneDuration = probed + FADE_DURATION;
-            console.log(`    ✓ Probed duration: ${probed.toFixed(2)}s (+${FADE_DURATION}s tail → ${sceneDuration.toFixed(2)}s)`);
-          } else {
-            // ffprobe failed — fall back to API value, clamp to minimum
-            const fallback = scene.audioDuration ?? 0;
-            sceneDuration = Math.max(fallback, MIN_SCENE_DURATION);
-            console.log(`    ⚠️  ffprobe failed, using fallback: ${sceneDuration.toFixed(2)}s`);
-          }
-        } else {
-          // No audio for this scene — hold image for the minimum duration
-          sceneDuration = MIN_SCENE_DURATION;
-          console.log(`    ℹ️  No audio, scene held for ${sceneDuration}s`);
-        }
-
-        mediaFiles.push({ image: imagePath, audio: audioPath, duration: sceneDuration });
-      } else {
+      if (!imagePath) {
         console.warn(`    ⚠️  Skipping scene ${i + 1} - no valid image`);
+        continue;
       }
+
+      // ── Duration ───────────────────────────────────────────────────────────
+      let sceneDuration: number;
+
+      if (audioPath) {
+        const probed = await this.probeAudioDuration(audioPath);
+        if (probed > 0) {
+          sceneDuration = probed + FADE_DURATION;
+          console.log(
+            `    ✓ Probed: ${probed.toFixed(2)}s (+${FADE_DURATION}s tail → ${sceneDuration.toFixed(2)}s)`,
+          );
+        } else {
+          const fallback = scene.audioDuration ?? 0;
+          sceneDuration  = Math.max(fallback, MIN_SCENE_DURATION);
+          console.log(`    ⚠️  ffprobe failed, using fallback: ${sceneDuration.toFixed(2)}s`);
+        }
+      } else {
+        sceneDuration = MIN_SCENE_DURATION;
+        console.log(`    ℹ️  No audio, scene held for ${sceneDuration}s`);
+      }
+
+      mediaFiles.push({
+        image:    imagePath,
+        audio:    audioPath,
+        duration: sceneDuration,
+        narration: scene.narration ?? "",
+      });
     }
 
     if (mediaFiles.length === 0) {
       throw new Error("No valid scenes with images found. Cannot create video.");
     }
 
-    console.log(
-      `\n  ✅ ${mediaFiles.length}/${scenes.length} scenes ready for video assembly`
-    );
+    console.log(`\n  ✅ ${mediaFiles.length}/${scenes.length} scenes ready for video assembly`);
 
     return mediaFiles;
   }
 
-  // ─── ffprobe: get real audio duration from a local file ─────────────────────
-  // fluent-ffmpeg bundles ffprobe, so no extra dependency needed.
+  // ─── ffprobe ─────────────────────────────────────────────────────────────────
+
   private probeAudioDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err: any, metadata: any) => {
-        if (err || !metadata?.format?.duration) {
-          resolve(0);
-        } else {
-          resolve(parseFloat(metadata.format.duration) || 0);
-        }
+        if (err || !metadata?.format?.duration) resolve(0);
+        else resolve(parseFloat(metadata.format.duration) || 0);
       });
     });
   }
+
+  // ─── File download with retry ────────────────────────────────────────────────
 
   private async downloadFile(url: string, outputPath: string): Promise<void> {
     const maxRetries = 3;
@@ -588,14 +527,9 @@ class VideoService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await axios({
-          url,
-          method: "GET",
-          responseType: "arraybuffer",
-          timeout: 15000, // 15s timeout
-        });
+        const response = await axios({ url, method: "GET", responseType: "arraybuffer", timeout: 15000 });
         await writeFile(outputPath, response.data);
-        return; // success
+        return;
       } catch (err: any) {
         lastError = err instanceof Error ? err : new Error(String(err));
         console.warn(`    ⚠️  Download attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
@@ -606,133 +540,141 @@ class VideoService {
     throw new Error(`Download failed after ${maxRetries} attempts: ${lastError?.message}`);
   }
 
-  // ─── FFmpeg ─────────────────────────────────────────────────────────────────
+  // ─── FFmpeg assembler ────────────────────────────────────────────────────────
 
   private createVideoWithFFmpeg(
     mediaFiles: MediaFile[],
     outputPath: string,
-    _title: string,
-    srtPath?: string
+    _title:     string,
+    srtPath?:   string,
+    options:    VideoGenerationOptions = {},
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      const genre = options.genre ?? "cinematic";
 
-      // ── Per-clip filter: scale to fill, crop to exact output size ───────────
-      const scaleFilter =
-        `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,` +
-        `crop=${OUT_W}:${OUT_H},setsar=1,fps=30`;
+      // ── Resolve per-scene effect configs ────────────────────────────────────
+      const narrationScenes = mediaFiles.map((m) => ({ narration: m.narration }));
+      const autoEffects     = assignSceneEffects(narrationScenes, options.globalTransition);
 
-      // ── Transition types (cycle through scene pairs) ────────────────────────
-      const transitionTypes = ['fade', 'fadeblack', 'wiperight', 'wipeleft',
-                               'slideright', 'slideleft', 'fade', 'fadeblack'];
+      const effectConfigs: SceneEffectConfig[] = autoEffects.map((auto, i) => ({
+        ...auto,
+        ...(options.sceneEffects?.[i] ?? {}),
+      }));
 
-      // ── Subtitle filter (applied to FINAL concatenated stream only) ─────────
-      // No background box — white text with black outline for readability.
-      const srtEscaped = srtPath
-        ? srtPath.replace(/\\/g, "/").replace(/:/g, "\\:")
-        : null;
-      const subtitleFilterStr = srtEscaped
-        ? `subtitles='${srtEscaped}':` +
-          `force_style='FontName=Arial,FontSize=18,Bold=1,` +
-          `PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,` +
-          `ShadowColour=&H80000000,BorderStyle=1,Outline=3,Shadow=1,` +
-          `Alignment=2,MarginV=60'`
-        : "";
+      // ── Subtitle filter (built once, applied to final stream) ───────────────
+      const subtitleFilter =
+        !options.disableSubtitles && srtPath
+          ? buildSubtitleFilter(srtPath, options.subtitleStyle)
+          : null;
 
       let command = ffmpeg();
 
-      // ── Single-scene path ──────────────────────────────────────────────────
+      // ── Single-scene path ───────────────────────────────────────────────────
       if (mediaFiles.length === 1) {
+        const cfg     = effectConfigs[0];
+        const sceneVf = buildSceneFilter(cfg.motion, mediaFiles[0].duration, cfg.impact, genre);
+        const finalVf = subtitleFilter ? `${sceneVf},${subtitleFilter}` : sceneVf;
+
         command
           .input(mediaFiles[0].image)
-          .inputOptions(["-loop", "1", "-t", mediaFiles[0].duration.toString()]);
+          .inputOptions(["-loop", "1", "-t", String(mediaFiles[0].duration)]);
+
         if (mediaFiles[0].audio) command.input(mediaFiles[0].audio);
 
-        const singleVf = subtitleFilterStr
-          ? `${scaleFilter},${subtitleFilterStr}`
-          : scaleFilter;
-
-        command.outputOptions(["-map", "0:v", "-vf", singleVf]);
+        command.outputOptions(["-map", "0:v", "-vf", finalVf]);
         if (mediaFiles[0].audio) command.outputOptions(["-map", "1:a", "-shortest"]);
 
-      // ── Multi-scene path ───────────────────────────────────────────────────
+      // ── Multi-scene path ────────────────────────────────────────────────────
       } else {
-        // Image inputs with -loop -t so each clip is exactly the scene duration
-        mediaFiles.forEach((m) => {
-          command.input(m.image).inputOptions(["-loop", "1", "-t", m.duration.toString()]);
-        });
+        const N = mediaFiles.length;
+
+        // Image inputs
+        mediaFiles.forEach((m) =>
+          command.input(m.image).inputOptions(["-loop", "1", "-t", String(m.duration)]),
+        );
 
         // Audio inputs
-        const audioSceneIndices: number[] = [];
+        const audioIndices: number[] = [];
         mediaFiles.forEach((m, i) => {
-          if (m.audio) { command.input(m.audio); audioSceneIndices.push(i); }
+          if (m.audio) { command.input(m.audio); audioIndices.push(i); }
         });
 
-        const N = mediaFiles.length;
         let filterComplex = "";
 
-        // Per-clip: scale + crop
+        // 1. Per-clip: prescale + zoompan + atmosphere
         for (let i = 0; i < N; i++) {
-          filterComplex += `[${i}:v]${scaleFilter}[sv${i}];`;
+          const cfg     = effectConfigs[i];
+          const sceneVf = buildSceneFilter(cfg.motion, mediaFiles[i].duration, cfg.impact, genre);
+          filterComplex += `[${i}:v]${sceneVf}[sv${i}];`;
         }
 
-        // xfade transition chain with varied effects
+        // 2. xfade chain — transition comes from SceneEffectConfig
         let cumulativeDuration = 0;
         let prev = "sv0";
 
         for (let i = 1; i < N; i++) {
           cumulativeDuration += mediaFiles[i - 1].duration;
-          const offset = Math.max(0, cumulativeDuration - FADE_DURATION * i);
-          const transition = transitionTypes[(i - 1) % transitionTypes.length];
-          const out = i === N - 1 ? (subtitleFilterStr ? "outv_raw" : "outv") : `v${i}`;
-          filterComplex += `[${prev}][sv${i}]xfade=transition=${transition}:duration=${FADE_DURATION}:offset=${offset}[${out}];`;
+          const offset     = Math.max(0, cumulativeDuration - FADE_DURATION * i);
+          const transition = effectConfigs[i - 1].transition;
+          const isLast     = i === N - 1;
+          const out        = isLast ? (subtitleFilter ? "outv_raw" : "outv") : `v${i}`;
+
+          // 'hard-cut' → near-zero duration fade (imperceptible cut)
+          const xfadeTransition = transition === "hard-cut" ? "fade" : transition;
+          const xfadeDuration   = transition === "hard-cut" ? 0.03 : FADE_DURATION;
+
+          filterComplex +=
+            `[${prev}][sv${i}]xfade=transition=${xfadeTransition}:duration=${xfadeDuration}:offset=${offset}[${out}];`;
+
           prev = out;
         }
 
-        // Subtitle filter on the final concatenated stream
-        if (subtitleFilterStr) {
-          filterComplex += `[outv_raw]${subtitleFilterStr}[outv];`;
+        // 3. Subtitle on final stream
+        if (subtitleFilter) {
+          filterComplex += `[outv_raw]${subtitleFilter}[outv];`;
         }
 
-        // Audio concat
-        if (audioSceneIndices.length > 0) {
-          const labels = audioSceneIndices.map((_, idx) => `[${N + idx}:a]`).join("");
-          filterComplex += `${labels}concat=n=${audioSceneIndices.length}:v=0:a=1[outa]`;
+        // 4. Audio concat
+        if (audioIndices.length > 0) {
+          const labels = audioIndices.map((_, idx) => `[${N + idx}:a]`).join("");
+          filterComplex += `${labels}concat=n=${audioIndices.length}:v=0:a=1[outa]`;
         } else {
           filterComplex = filterComplex.replace(/;$/, "");
         }
 
         command.complexFilter(filterComplex);
         command.outputOptions(["-map", "[outv]"]);
-        if (audioSceneIndices.length > 0) command.outputOptions(["-map", "[outa]"]);
+        if (audioIndices.length > 0) {
+          command.outputOptions(["-map", "[outa]"]);
+          command.outputOptions(["-shortest"]);
+        }
       }
 
       command
         .output(outputPath)
         .outputOptions([
-          "-c:v", "libx264",
+          "-c:v",    "libx264",
           "-preset", "medium",
-          "-crf", "23",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "192k",
-          "-ar", "44100",
+          "-crf",    "23",
+          "-pix_fmt","yuv420p",
+          "-c:a",    "aac",
+          "-b:a",    "192k",
+          "-ar",     "44100",
         ])
-        .on("start", (cmd) => console.log("FFmpeg:", cmd))
-        .on("progress", (p) => { if (p.percent) console.log(`  ${Math.round(p.percent)}%`); })
-        .on("end", () => { console.log("  ✓ Done"); resolve(); })
-        .on("error", (err) => { console.error("  ✗ FFmpeg error:", err.message); reject(err); })
+        .on("start",    (cmd) => console.log("FFmpeg:", cmd))
+        .on("progress", (p)   => { if (p.percent) console.log(`  ${Math.round(p.percent)}%`); })
+        .on("end",      ()    => { console.log("  ✓ Done"); resolve(); })
+        .on("error",    (err) => { console.error("  ✗ FFmpeg error:", err.message); reject(err); })
         .run();
     });
   }
 
-  // ─── Cleanup ────────────────────────────────────────────────────────────────
+  // ─── Cleanup ─────────────────────────────────────────────────────────────────
 
   private async cleanupTempFiles(tempDir: string): Promise<void> {
     try {
       const files = await readdir(tempDir);
-      for (const file of files) {
-        await unlink(path.join(tempDir, file));
-      }
+      for (const file of files) await unlink(path.join(tempDir, file));
       await fs.promises.rmdir(tempDir);
       console.log(`  ✓ Cleaned up temporary files`);
     } catch (error) {
@@ -740,7 +682,7 @@ class VideoService {
     }
   }
 
-  // ─── Utilities ──────────────────────────────────────────────────────────────
+  // ─── Utilities ────────────────────────────────────────────────────────────────
 
   private generateVideoId(): string {
     return `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
