@@ -55,50 +55,64 @@ private GENRE_RULES : Record<string, string> = {
     - Goosebumps feeling
     - Slow tension build
 
-    Example Script: 
+    Script example — “The House That Called Names”
     
-    From a quiet town where nothing ever happened…
+    People said the house was empty.
 
-people began waking up at exactly three in the morning.
+But every night,
+someone inside
+called them by name.
 
-Not from noise.
-Not from dreams.
+At first,
+the town laughed.
 
-But from the feeling that someone was watching them.
+Old houses make noises.
+Wood cracks.
+Pipes groan.
+Wind plays tricks.
 
-At first, they ignored it.
+That’s what everyone said.
 
-Then the cameras started recording something strange.
+Until the recordings started.
 
-Doors opening by themselves.
-Shadows moving without a source.
-Whispers — captured on empty audio.
+One family placed a camera
+outside the front door.
 
-One family claimed their child was talking to someone in the hallway.
+At 3:14 a.m.,
+the porch light turned on by itself.
 
-But there was no one there.
+Then a voice came from inside.
 
-When they checked the footage…
+Soft.
+Slow.
+Almost whispering.
 
-the child was speaking to a dark figure standing perfectly still.
+It called their daughter’s name.
 
-Authorities investigated.
+She was standing outside
+with her parents.
 
-No forced entry.
+No one entered.
+No one left.
+The doors never opened.
+
+Police searched the house.
+
+Nothing.
+
+No footprints.
+No intruder.
 No explanation.
-No suspects.
 
-Weeks later, the entire family disappeared.
+But after that night,
+people stopped walking past the house.
 
-Their house still stands today.
+Because sometimes,
+just before dawn,
 
-Lights occasionally turn on at night.
+it doesn’t call a child’s name.
 
-Neighbors say if you walk past it after midnight…
-
-you can hear someone calling your name.
-
-Would you answer?
+It calls yours.
   `,
 
   education:`
@@ -109,39 +123,59 @@ Would you answer?
     - Simple storytelling
     - Curiosity driven
 
-    Example script: 
+    Script example — “The Internet Is Not Invisible”
 
-Every second you spend online…
+Every second you spend online,
 
-thousands of invisible systems are working around you.
+you depend on machines
+most people will never see.
 
-Messages travel across oceans in milliseconds.
-Videos stream instantly.
-Entire digital worlds exist in your pocket.
+A message feels instant.
+A video loads in seconds.
+A photo crosses the world
+almost immediately.
 
-But where does all this power come from?
+So it feels invisible.
 
-Hidden across the planet are massive data centers.
+But it isn’t.
 
-Inside them — millions of servers run day and night.
+Behind every click
+are massive data centers.
 
-They consume enormous electricity.
-They generate intense heat.
-Some facilities even use ocean water just to stay cool.
+Buildings filled
+with rows of servers
+running day and night.
 
-If these systems stopped for only one hour…
+They store information.
+Move data.
+Power apps.
+Handle billions of requests.
 
-global banking would freeze.
-Air traffic would collapse.
-Communication would fail.
+And they consume
+enormous amounts of electricity.
 
-Modern civilization depends on machines most people never see.
+They produce so much heat,
+some facilities need
+advanced cooling systems
+just to keep operating.
 
-The internet feels invisible.
+If enough of them failed at once,
 
-But behind it lies one of the largest infrastructures ever built by humanity.
+banking would stall.
+Websites would disappear.
+Cloud tools would stop.
+Communication would slow down.
 
-And it keeps growing every day.
+The internet feels weightless.
+
+But in reality,
+
+it depends on one of the largest
+physical infrastructures
+humans have ever built.
+
+And most people never think about it
+until it stops working.
 
   `,
   history: `
@@ -152,33 +186,58 @@ And it keeps growing every day.
     - Dramatic historical tone
 
 
-    Example script: 
-In 1986, a routine safety test turned into one of the worst disasters in human history.
+    Script example — “The Day Pompeii Disappeared”
+In a single day,
 
-Inside a nuclear power plant, a small mistake triggered a chain reaction.
+an entire city
+vanished under ash.
 
-The explosion released invisible radiation into the air.
+Pompeii was once
+a busy Roman city.
 
-Entire cities were evacuated overnight.
+Its streets were crowded.
+Its markets were alive.
+Its people lived
+beneath the shadow
+of Mount Vesuvius.
 
-People left behind homes, memories, entire lives.
+But they did not know
+what was coming.
 
-Firefighters rushed to the scene without knowing the danger.
+In 79 AD,
+the volcano erupted.
 
-Many never returned.
+At first,
+ash began falling from the sky.
 
-For years, the truth was hidden.
+Then came the smoke.
+Then the fire.
+Then the deadly clouds
+moving faster than people could run.
 
-The world only learned the scale of the disaster later.
+Homes collapsed.
+Streets disappeared.
+Families were trapped
+where they stood.
 
-Even today, the abandoned zone remains.
+In just hours,
+the city was buried.
 
-Nature slowly reclaims empty buildings.
-Time stands still.
+For centuries,
+Pompeii remained hidden.
 
-It was a moment that changed how humanity understood technology, risk, and responsibility.
+Until archaeologists uncovered it,
+frozen in time.
 
-History remembers it as a warning.
+Roads.
+Walls.
+Objects.
+Even the final moments
+of the people who lived there.
+
+History did not just remember Pompeii.
+
+It preserved its last breath.
   `,
   trueCrime:`
     Tone: dark true crime documentary
@@ -187,38 +246,67 @@ History remembers it as a warning.
     - Evidence and mystery
     - Tension and unanswered questions
 
-    Example script: One night,
-One evening, a successful businessman left his office.
+    Script example — “The Man Who Entered and Never Returned”
+A man walked into an elevator.
 
-Security cameras captured him entering the elevator.
+And then,
+he disappeared.
 
-But he never exited.
+Security cameras showed him
+entering alone
+late at night.
 
-When investigators checked the building,
+He pressed a button.
+The doors closed.
 
-the elevator was empty.
+Nothing unusual.
 
-No hidden passages.
-No signs of struggle.
-No evidence.
+But when the elevator opened again,
 
-His phone was found on his desk.
-His car remained in the parking garage.
+he was gone.
 
-It was as if he vanished into thin air.
+Police checked the building.
 
-Detectives searched for years.
+No emergency exit.
+No hidden shaft.
+No sign of a struggle.
 
-Some believed it was a planned disappearance.
-Others suspected something far darker.
+His car was still parked outside.
 
-The case remains open.
+His phone
+was found in his office.
 
-And the footage still exists —
+His wallet was untouched.
 
-showing a man entering an elevator…
+It was as if
+he had simply stopped existing
+between one floor and the next.
 
-and never coming out.
+Investigators reviewed the footage
+again and again.
+
+Frame by frame.
+
+No one entered.
+No one left.
+No clear malfunction.
+No explanation.
+
+Some believed
+he planned everything.
+
+Others believed
+something happened
+inside that elevator
+that was never captured.
+
+The case was never solved.
+
+And the video still remains—
+
+showing a man step inside,
+
+and never come back out.
   `,
   stoic:`
     Tone: powerful stoic motivation
@@ -229,36 +317,60 @@ and never coming out.
     - Philosophical message
 
 
-    Example script:
-Most people run from difficulty.
+    Script example — “Discipline Is Freedom”
 
-They search for comfort.
-They avoid pain.
-They fear struggle.
+Most people think discipline
+is a form of punishment.
 
-But history shows a different truth.
-
-Growth begins where comfort ends.
-
-Every obstacle you face
-is an opportunity to strengthen your mind.
-
-Discipline is not punishment.
+It isn’t.
 
 It is freedom.
 
-When you control your thoughts,
-fear loses its power.
+Without discipline,
+your mood controls you.
 
-When you accept hardship,
-nothing can break you.
+Your fear controls you.
+Your habits control you.
+Your distractions control you.
 
-The world may be chaotic.
+You say you want more.
 
-But your mind can remain calm.
+A better body.
+A stronger mind.
+A better life.
 
-Master yourself —
-and you master everything.
+But wanting is easy.
+
+The hard part
+is showing up
+when you are tired,
+unmotivated,
+and full of excuses.
+
+That is where discipline begins.
+
+Not when things feel good.
+
+When they don’t.
+
+Because real strength
+is not loud.
+
+It does not beg for attention.
+
+It is the quiet decision
+to keep going
+when no one is watching.
+
+Anyone can act powerful
+for a moment.
+
+But the person
+who controls himself
+day after day—
+
+that is the person
+who becomes unbreakable.
   `,
 }
 

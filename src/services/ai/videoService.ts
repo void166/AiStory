@@ -1,7 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// services/videoService.ts
-// ─────────────────────────────────────────────────────────────────────────────
-
 import scriptService from "./scriptService";
 import audioService from "./aud";
 import imageService from "./imageService";
