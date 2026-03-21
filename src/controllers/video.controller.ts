@@ -12,7 +12,20 @@ class VideoController {
   
   async generateVideos(req: Request, res: Response): Promise<void> {
     try {
-      const { topic, duration, genre, language, imageStyle, voiceId } = req.body;
+      const {
+        topic,
+        duration,
+        genre,
+        language,
+        imageStyle,
+        voiceId,
+        bgmPath,
+        bgmVolume,
+        globalTransition,  // ← нэмсэн
+        sceneEffects,      // ← нэмсэн
+        subtitleStyle,     // ← нэмсэн
+        disableSubtitles,  // ← нэмсэн
+      } = req.body;
 
       // Validation
       if (!topic || topic.trim().length === 0) {
@@ -28,14 +41,22 @@ class VideoController {
       console.log('  Duration:', duration || 60);
       console.log('  Genre:', genre || 'horror');
       console.log('  Language:', language || 'mongolian');
+      console.log('  BGM:', bgmPath || 'history1');
+      console.log('  Subtitles disabled:', disableSubtitles ?? false);
 
       // Start video generation
       const result = await videoService.generateVideos(topic, {
-        duration: duration || 60,
-        genre: genre || 'horror',
-        language: language || 'mongolian',
-        imageStyle: imageStyle || 'anime',
-        voiceId: voiceId || 'JBFqnCBsd6RMkjVDRZzb'
+        duration:         duration         || 60,
+        genre:            genre            || 'horror',
+        language:         language         || 'mongolian',
+        imageStyle:       imageStyle       || 'anime',
+        voiceId:          voiceId          || 'JBFqnCBsd6RMkjVDRZzb',
+        bgmPath:          bgmPath          || 'history1',
+        bgmVolume:        bgmVolume        || '0.15',
+        globalTransition: globalTransition || undefined,   // ← нэмсэн
+        sceneEffects:     sceneEffects     || undefined,   // ← нэмсэн
+        subtitleStyle:    subtitleStyle    || undefined,   // ← нэмсэн
+        disableSubtitles: disableSubtitles ?? false,       // ← нэмсэн
       });
 
       console.log('\n✅ Video generation successful');
@@ -59,41 +80,27 @@ class VideoController {
 
   async regenerateScene(req: Request, res: Response): Promise<void> {
     try {
-      // Safely extract videoId
       const videoId = getStringParam(req.params.videoId);
       const { sceneIndex, regenerateWhat } = req.body;
 
       if (!videoId) {
-        res.status(400).json({
-          success: false,
-          error: 'Video ID is required'
-        });
+        res.status(400).json({ success: false, error: 'Video ID is required' });
         return;
       }
 
       if (sceneIndex === undefined || sceneIndex < 0) {
-        res.status(400).json({
-          success: false,
-          error: 'Valid scene index is required'
-        });
+        res.status(400).json({ success: false, error: 'Valid scene index is required' });
         return;
       }
 
       if (!['audio', 'image', 'both'].includes(regenerateWhat)) {
-        res.status(400).json({
-          success: false,
-          error: 'regenerateWhat must be: audio, image, or both'
-        });
+        res.status(400).json({ success: false, error: 'regenerateWhat must be: audio, image, or both' });
         return;
       }
 
       console.log(`\n🔄 Regenerate request: ${videoId} / scene ${sceneIndex} / ${regenerateWhat}`);
 
-      const result = await videoService.regenerateSceneMedia(
-        videoId,
-        sceneIndex,
-        regenerateWhat
-      );
+      const result = await videoService.regenerateSceneMedia(videoId, sceneIndex, regenerateWhat);
 
       res.status(200).json({
         success: true,
@@ -103,49 +110,31 @@ class VideoController {
 
     } catch (error: any) {
       console.error('\n❌ Scene regeneration error:', error);
-
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Scene regeneration failed'
-      });
+      res.status(500).json({ success: false, error: error.message || 'Scene regeneration failed' });
     }
   }
 
   async getVideoStatus(req: Request, res: Response): Promise<void> {
     try {
-      // Safely extract videoId
       const videoId = getStringParam(req.params.videoId);
 
       if (!videoId) {
-        res.status(404).json({
-          success: false,
-          error: 'Video ID is required'
-        });
+        res.status(404).json({ success: false, error: 'Video ID is required' });
         return;
       }
 
       const video = await videoService.getVideoStatus(videoId);
 
       if (!video) {
-        res.status(404).json({
-          success: false,
-          error: 'Video not found'
-        });
+        res.status(404).json({ success: false, error: 'Video not found' });
         return;
       }
 
-      res.status(200).json({
-        success: true,
-        data: video
-      });
+      res.status(200).json({ success: true, data: video });
 
     } catch (error: any) {
       console.error('\n❌ Get video status error:', error);
-
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to get video status'
-      });
+      res.status(500).json({ success: false, error: error.message || 'Failed to get video status' });
     }
   }
 
@@ -154,13 +143,16 @@ class VideoController {
       console.log('\n🧪 Running test generation...');
 
       const testResult = await videoService.generateVideos(
-        'Хар сүүдрийн нууц', // Test topic
+        'Хар сүүдрийн нууц',
         {
-          duration: 20, // Short test
-          genre: 'horror',
-          language: 'mongolian',
-          imageStyle: 'anime',
-          voiceId: 'JBFqnCBsd6RMkjVDRZzb'
+          duration:         20,
+          genre:            'horror',
+          language:         'mongolian',
+          imageStyle:       'anime',
+          voiceId:          'JBFqnCBsd6RMkjVDRZzb',
+          bgmPath:          'scary1',
+          bgmVolume:        '0.15',
+          disableSubtitles: false,
         }
       );
 
@@ -172,12 +164,7 @@ class VideoController {
 
     } catch (error: any) {
       console.error('\n❌ Test generation error:', error);
-
-      res.status(500).json({
-        success: false,
-        error: error.message,
-        details: error.stack
-      });
+      res.status(500).json({ success: false, error: error.message, details: error.stack });
     }
   }
 }

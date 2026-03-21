@@ -34,25 +34,17 @@ const FADE_DURATION      = 0.5; // seconds — xfade overlap between clips
 
 export interface VideoGenerationOptions {
   duration?:     number;
-  /** 'scary' | 'education' | 'vintage' | 'cinematic'  (default: 'cinematic') */
   genre?:        string;
   language?:     string;
   imageStyle?:   string;
   voiceId?:      string;
   outputPath?:   string;
-
-  // ── Effect overrides exposed to callers ──────────────────────────────────
-  /** Force the same transition for every scene instead of auto-selecting */
   globalTransition?: TransitionPreset;
-  /**
-   * Per-scene effect overrides; index matches the scene order.
-   * Unspecified fields fall back to auto-assigned values.
-   */
   sceneEffects?: Partial<SceneEffectConfig>[];
-
-  // ── Subtitle options ─────────────────────────────────────────────────────
   subtitleStyle?:    SubtitleStyle;
   disableSubtitles?: boolean;
+  bgmPath?: string;       // FIX: made optional
+  bgmVolume?: string;     // FIX: made optional
 }
 
 interface SceneWithMedia {
@@ -80,12 +72,10 @@ interface VideoGenerationResult {
   srtPath?:   string;
 }
 
-/** Internal per-clip descriptor passed to the FFmpeg assembler */
 interface MediaFile {
   image:    string;
   audio?:   string;
   duration: number;
-  /** Forwarded from the scene so effects.ts can derive impact */
   narration: string;
 }
 
@@ -98,6 +88,18 @@ class VideoService {
   constructor() {
     this.ensureDirectories();
   }
+
+  private BGM_LIBRARY: Record<string, string> = {
+    "scary1": path.join(process.cwd(), "src", "services", "bgMusic", "scary1.mp3"),
+    "education1": path.join(process.cwd(), "src", "services", "bgMusic", "education1.mp3"),
+    "education2": path.join(process.cwd(), "src", "services", "bgMusic", "education2.mp3"),
+    "history1": path.join(process.cwd(), "src", "services", "bgMusic", "history1.mp3"),
+    "history2": path.join(process.cwd(), "src", "services", "bgMusic", "history2.mp3"),
+    "stoic1": path.join(process.cwd(), "src", "services", "bgMusic", "stoic1.mp3"),
+    "stoic2": path.join(process.cwd(), "src", "services", "bgMusic", "stoic2.mp3"),
+    "trueCrime1": path.join(process.cwd(), "src", "services", "bgMusic", "trueCrime1.mp3"),
+    "trueCrime2": path.join(process.cwd(), "src", "services", "bgMusic", "trueCrime2.mp3"),
+  };
 
   // ─── Directory helpers ──────────────────────────────────────────────────────
 
@@ -117,6 +119,11 @@ class VideoService {
     options: VideoGenerationOptions = {},
   ): Promise<VideoGenerationResult> {
     const videoId = this.generateVideoId();
+
+    // FIX: inverted logic — throw only when bgmPath is given but NOT in the library
+    if (options.bgmPath && !this.BGM_LIBRARY[options.bgmPath]) {
+      throw new Error(`Invalid bgmPath "${options.bgmPath}". Choose from: ${Object.keys(this.BGM_LIBRARY).join(", ")}`);
+    }
 
     try {
       console.log(`Starting video gen: ${videoId}`);
@@ -383,6 +390,15 @@ class VideoService {
     await mkdir(tempVideoDir, { recursive: true });
 
     try {
+      // Resolve bgmPath key → absolute path if it's a library key
+      if (options.bgmPath && this.BGM_LIBRARY[options.bgmPath]) {
+        options.bgmPath = this.BGM_LIBRARY[options.bgmPath];
+      } else if (options.bgmPath && !fs.existsSync(options.bgmPath)) {
+        // bgmPath was given but is neither a library key nor a real file
+        console.warn(`  ⚠️  BGM path not found, skipping: ${options.bgmPath}`);
+        options.bgmPath = undefined;
+      }
+
       console.log(`\n🔧 Preparing media files...`);
       const mediaFiles = await this.downloadSceneMedia(scenes, tempVideoDir);
 
@@ -548,7 +564,6 @@ class VideoService {
     return new Promise<void>((resolve, reject) => {
       const genre = options.genre ?? "cinematic";
 
-      // ── Resolve per-scene effect configs ────────────────────────────────────
       const narrationScenes = mediaFiles.map((m) => ({ narration: m.narration }));
       const autoEffects     = assignSceneEffects(narrationScenes, options.globalTransition);
 
@@ -557,7 +572,6 @@ class VideoService {
         ...(options.sceneEffects?.[i] ?? {}),
       }));
 
-      // ── Subtitle filter (built once, applied to final stream) ───────────────
       const subtitleFilter =
         !options.disableSubtitles && srtPath
           ? buildSubtitleFilter(srtPath, options.subtitleStyle)
@@ -595,6 +609,12 @@ class VideoService {
           if (m.audio) { command.input(m.audio); audioIndices.push(i); }
         });
 
+        let bgmInputIdx = -1;
+        if (options.bgmPath && fs.existsSync(options.bgmPath)) {
+          command.input(options.bgmPath).inputOptions(["-stream_loop", "-1"]);
+          bgmInputIdx = N + audioIndices.length;
+        }
+
         let filterComplex = "";
 
         // 1. Per-clip: prescale + zoompan + atmosphere
@@ -604,7 +624,7 @@ class VideoService {
           filterComplex += `[${i}:v]${sceneVf}[sv${i}];`;
         }
 
-        // 2. xfade chain — transition comes from SceneEffectConfig
+        // 2. xfade chain
         let cumulativeDuration = 0;
         let prev = "sv0";
 
@@ -615,7 +635,6 @@ class VideoService {
           const isLast     = i === N - 1;
           const out        = isLast ? (subtitleFilter ? "outv_raw" : "outv") : `v${i}`;
 
-          // 'hard-cut' → near-zero duration fade (imperceptible cut)
           const xfadeTransition = transition === "hard-cut" ? "fade" : transition;
           const xfadeDuration   = transition === "hard-cut" ? 0.03 : FADE_DURATION;
 
@@ -630,11 +649,22 @@ class VideoService {
           filterComplex += `[outv_raw]${subtitleFilter}[outv];`;
         }
 
-        // 4. Audio concat
+        // 4. Audio concat + optional BGM mix
         if (audioIndices.length > 0) {
-          const labels = audioIndices.map((_, idx) => `[${N + idx}:a]`).join("");
-          filterComplex += `${labels}concat=n=${audioIndices.length}:v=0:a=1[outa]`;
-        } else {
+          const narrLabels = audioIndices.map((_, idx) => `[${N + idx}:a]`).join("");
+          const volume = options.bgmVolume ? parseFloat(options.bgmVolume) : 0.15;
+        
+          filterComplex += `${narrLabels}concat=n=${audioIndices.length}:v=0:a=1[narr_raw];`;
+        
+          if (bgmInputIdx !== -1) {
+            filterComplex += `[${bgmInputIdx}:a]volume=${volume}[bgm_low];`;
+            // ✅ duration=first — narration дуусахад BGM ч дуусна
+            filterComplex += `[narr_raw][bgm_low]amix=inputs=2:duration=first:dropout_transition=2[outa]`;
+          } else {
+            // ✅ apad устгасан
+            filterComplex += `[narr_raw]acopy[outa]`;
+          }
+        
           filterComplex = filterComplex.replace(/;$/, "");
         }
 
@@ -642,13 +672,22 @@ class VideoService {
         command.outputOptions(["-map", "[outv]"]);
         if (audioIndices.length > 0) {
           command.outputOptions(["-map", "[outa]"]);
-          command.outputOptions(["-shortest"]);
+          // FIX: only add -shortest when there is NO bgm (amix handles duration itself)
+          if (bgmInputIdx === -1) {
+            command.outputOptions(["-shortest"]);
+          }
         }
       }
+      const totalDuration =
+  mediaFiles.reduce((s, m) => s + m.duration, 0) -
+  FADE_DURATION * (mediaFiles.length - 1);
+
+console.log(`  🎯 Output duration capped at: ${totalDuration.toFixed(2)}s`);
 
       command
         .output(outputPath)
         .outputOptions([
+          "-t", totalDuration.toFixed(3),
           "-c:v",    "libx264",
           "-preset", "medium",
           "-crf",    "23",
