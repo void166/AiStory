@@ -25,10 +25,10 @@ const writeFile = promisify(fs.writeFile);
 const unlink   = promisify(fs.unlink);
 const readdir  = promisify(fs.readdir);
 
-// ─── Constants ───────────────────────────────────────────────────────────────
 
-const MIN_SCENE_DURATION = 5;  // seconds — floor when there is no audio
-const FADE_DURATION      = 0.5; // seconds — xfade overlap between clips
+
+const MIN_SCENE_DURATION = 5; 
+const FADE_DURATION      = 0.5; 
 
 
 
@@ -101,7 +101,7 @@ class VideoService {
     "trueCrime2": path.join(process.cwd(), "src", "services", "bgMusic", "trueCrime2.mp3"),
   };
 
-  // ─── Directory helpers ──────────────────────────────────────────────────────
+
 
   private async ensureDirectories() {
     try {
@@ -112,7 +112,7 @@ class VideoService {
     }
   }
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
+
 
   async generateVideos(
     topic:   string,
@@ -120,7 +120,7 @@ class VideoService {
   ): Promise<VideoGenerationResult> {
     const videoId = this.generateVideoId();
 
-    // FIX: inverted logic — throw only when bgmPath is given but NOT in the library
+
     if (options.bgmPath && !this.BGM_LIBRARY[options.bgmPath]) {
       throw new Error(`Invalid bgmPath "${options.bgmPath}". Choose from: ${Object.keys(this.BGM_LIBRARY).join(", ")}`);
     }
@@ -150,7 +150,7 @@ class VideoService {
         ),
       );
 
-      // Generate audio sequentially (API rate-limit safe)
+
       const processedScenes: SceneWithMedia[] = [];
       for (let i = 0; i < script.script.length; i++) {
         const scene = script.script[i];
@@ -159,7 +159,7 @@ class VideoService {
         processedScenes.push({ ...audioResults[0] } as SceneWithMedia);
       }
 
-      // Attach image URLs once all image generations settle
+
       const imageResults = await Promise.allSettled(imagePromises);
       imageResults.forEach((result, index) => {
         if (result.status === "fulfilled") {
@@ -242,12 +242,33 @@ class VideoService {
   async regenerateSceneMedia(
     _videoId:        string,
     _sceneIndex:     number,
-    _regenerateWhat: "audio" | "image" | "both",
-  ): Promise<SceneWithMedia> {
-    throw new Error("regenerateSceneMedia requires database integration");
+    regenerateWhat:  "audio" | "image" | "both",
+    sceneData?:      { imagePrompt?: string; narration?: string; time?: string; scene?: string },
+  ): Promise<Partial<SceneWithMedia>> {
+    const result: Partial<SceneWithMedia> = {};
+
+    if ((regenerateWhat === "image" || regenerateWhat === "both") && sceneData?.imagePrompt) {
+      console.log(`\n🎨 Regenerating image for scene...`);
+      const newImageUrl = await imageService.generateSingle(
+        {
+          time:        sceneData.time        ?? "",
+          scene:       sceneData.scene       ?? "",
+          description: sceneData.imagePrompt ?? "",
+        },
+        sceneData.imagePrompt,
+      );
+      result.imageUrl = newImageUrl;
+      console.log(`  ✓ New image: ${newImageUrl.substring(0, 60)}...`);
+    }
+
+    if (regenerateWhat === "audio" || regenerateWhat === "both") {
+      throw new Error("Audio regeneration requires database integration to retrieve voice settings");
+    }
+
+    return result;
   }
 
-  // ─── Audio generation ───────────────────────────────────────────────────────
+
 
   private async generateAudioForScenes(
     scenes:   any[],
@@ -292,7 +313,7 @@ class VideoService {
     return result;
   }
 
-  // ─── SRT generation ─────────────────────────────────────────────────────────
+
 
   private async generateSRT(
     videoId: string,
@@ -323,7 +344,7 @@ class VideoService {
     return srt.replace(/^\d+$/gm, () => String(index++));
   }
 
-  // ─── Image generation (legacy path — kept for compatibility) ────────────────
+
 
   private async generateImagesForScenes(
     scenes:           SceneWithMedia[],
@@ -406,7 +427,7 @@ class VideoService {
     return updated;
   }
 
-  // ─── Video assembly ─────────────────────────────────────────────────────────
+
 
   private async assembleVideo(
     videoId:  string,
@@ -419,11 +440,11 @@ class VideoService {
     await mkdir(tempVideoDir, { recursive: true });
 
     try {
-      // Resolve bgmPath key → absolute path if it's a library key
+
       if (options.bgmPath && this.BGM_LIBRARY[options.bgmPath]) {
         options.bgmPath = this.BGM_LIBRARY[options.bgmPath];
       } else if (options.bgmPath && !fs.existsSync(options.bgmPath)) {
-        // bgmPath was given but is neither a library key nor a real file
+
         console.warn(`  ⚠️  BGM path not found, skipping: ${options.bgmPath}`);
         options.bgmPath = undefined;
       }
@@ -443,19 +464,19 @@ class VideoService {
       const totalDuration =
         mediaFiles.reduce((s, m) => s + m.duration, 0) -
         FADE_DURATION * (mediaFiles.length - 1);
-      console.log(`  Expected video length: ~${totalDuration.toFixed(1)}s`);
+      console.log(`Expected video length: ~${totalDuration.toFixed(1)}s`);
 
-      console.log(`\n🎬 Creating video with FFmpeg...`);
+      console.log(`\nCreating video with FFmpeg...`);
       const outputPath = path.join(options.outputPath ?? this.outputDir, `${videoId}.mp4`);
 
       await this.createVideoWithFFmpeg(mediaFiles, outputPath, title, srtPath, options);
 
-      console.log(`\n✨ Video created successfully!`);
+      console.log(`\nVideo created successfully!`);
       await this.cleanupTempFiles(tempVideoDir);
 
       return outputPath;
     } catch (error: any) {
-      console.error(`\n❌ Video assembly failed: ${error.message}`);
+      console.error(`\nVideo assembly failed: ${error.message}`);
       throw error;
     }
   }
@@ -470,7 +491,7 @@ class VideoService {
       const scene = scenes[i];
       console.log(`  [${i + 1}/${scenes.length}] Preparing media...`);
 
-      // ── Image ──────────────────────────────────────────────────────────────
+
       let imagePath: string | undefined;
 
       if (scene.imageUrl) {
@@ -494,7 +515,7 @@ class VideoService {
         console.warn(`    ⚠️  No image URL for scene ${i + 1} - skipping`);
       }
 
-      // ── Audio ──────────────────────────────────────────────────────────────
+
       let audioPath: string | undefined;
 
       if (scene.audioUrl) {
@@ -512,7 +533,7 @@ class VideoService {
         continue;
       }
 
-      // ── Duration ───────────────────────────────────────────────────────────
+
       let sceneDuration: number;
 
       if (audioPath) {
@@ -549,7 +570,7 @@ class VideoService {
     return mediaFiles;
   }
 
-  // ─── ffprobe ─────────────────────────────────────────────────────────────────
+
 
   private probeAudioDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
@@ -560,7 +581,7 @@ class VideoService {
     });
   }
 
-  // ─── File download with retry ────────────────────────────────────────────────
+
 
   private async downloadFile(url: string, outputPath: string): Promise<void> {
     const maxRetries = 3;
@@ -608,7 +629,7 @@ class VideoService {
 
       let command = ffmpeg();
 
-      // ── Single-scene path ───────────────────────────────────────────────────
+
       if (mediaFiles.length === 1) {
         const cfg     = effectConfigs[0];
         const sceneVf = buildSceneFilter(cfg.motion, mediaFiles[0].duration, cfg.impact, genre);
@@ -623,16 +644,16 @@ class VideoService {
         command.outputOptions(["-map", "0:v", "-vf", finalVf]);
         if (mediaFiles[0].audio) command.outputOptions(["-map", "1:a", "-shortest"]);
 
-      // ── Multi-scene path ────────────────────────────────────────────────────
+
       } else {
         const N = mediaFiles.length;
 
-        // Image inputs
+
         mediaFiles.forEach((m) =>
           command.input(m.image).inputOptions(["-loop", "1", "-t", String(m.duration)]),
         );
 
-        // Audio inputs
+
         const audioIndices: number[] = [];
         mediaFiles.forEach((m, i) => {
           if (m.audio) { command.input(m.audio); audioIndices.push(i); }
@@ -733,7 +754,7 @@ console.log(`  🎯 Output duration capped at: ${totalDuration.toFixed(2)}s`);
     });
   }
 
-  // ─── Cleanup ─────────────────────────────────────────────────────────────────
+
 
   private async cleanupTempFiles(tempDir: string): Promise<void> {
     try {
@@ -746,7 +767,7 @@ console.log(`  🎯 Output duration capped at: ${totalDuration.toFixed(2)}s`);
     }
   }
 
-  // ─── Utilities ────────────────────────────────────────────────────────────────
+
 
   private generateVideoId(): string {
     return `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;

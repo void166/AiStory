@@ -22,10 +22,10 @@ class VideoController {
         voiceId,
         bgmPath,
         bgmVolume,
-        globalTransition,  // ← нэмсэн
-        sceneEffects,      // ← нэмсэн
-        subtitleStyle,     // ← нэмсэн
-        disableSubtitles,  // ← нэмсэн
+        globalTransition,  
+        sceneEffects,      
+        subtitleStyle,     
+        disableSubtitles,  
       } = req.body;
 
       // Validation
@@ -45,7 +45,7 @@ class VideoController {
       console.log('  BGM:', bgmPath || 'history1');
       console.log('  Subtitles disabled:', disableSubtitles ?? false);
 
-      // Start video generation
+
       const result = await videoService.generateVideos(topic, {
         duration:         duration         || 60,
         genre:            genre            || 'horror',
@@ -60,7 +60,7 @@ class VideoController {
         disableSubtitles: disableSubtitles ?? false,       // ← нэмсэн
       });
 
-      console.log('\n✅ Video generation successful');
+      console.log('\nVideo generation successful');
 
       res.status(200).json({
         success: true,
@@ -69,7 +69,7 @@ class VideoController {
       });
 
     } catch (error: any) {
-      console.error('\n❌ Video generation error:', error);
+      console.error('\nVideo generation error:', error);
 
       res.status(500).json({
         success: false,
@@ -82,7 +82,7 @@ class VideoController {
   async regenerateScene(req: Request, res: Response): Promise<void> {
     try {
       const videoId = getStringParam(req.params.videoId);
-      const { sceneIndex, regenerateWhat } = req.body;
+      const { sceneIndex, regenerateWhat, imagePrompt, narration, time, scene } = req.body;
 
       if (!videoId) {
         res.status(400).json({ success: false, error: 'Video ID is required' });
@@ -99,9 +99,12 @@ class VideoController {
         return;
       }
 
-      console.log(`\n🔄 Regenerate request: ${videoId} / scene ${sceneIndex} / ${regenerateWhat}`);
+      console.log(`\nRegenerate request: ${videoId} / scene ${sceneIndex} / ${regenerateWhat}`);
 
-      const result = await videoService.regenerateSceneMedia(videoId, sceneIndex, regenerateWhat);
+      const result = await videoService.regenerateSceneMedia(
+        videoId, sceneIndex, regenerateWhat,
+        { imagePrompt, narration, time, scene },
+      );
 
       res.status(200).json({
         success: true,
@@ -150,7 +153,7 @@ class VideoController {
       const {
         scenes,
         title,
-        sceneTransitions, // string[] — one per scene gap, e.g. ['fadeblack','wiperight',...]
+        sceneTransitions,
         subtitleStyle,
         disableSubtitles,
         bgmPath,
@@ -164,7 +167,7 @@ class VideoController {
       }
 
       const VALID_TRANSITIONS: TransitionPreset[] = ['fadeblack','fade','wiperight','wipeleft','hard-cut'];
-      // Build sceneEffects from sceneTransitions (only transition override, motion auto)
+
       const sceneEffects: Array<{ transition?: TransitionPreset }> = scenes.map((_: unknown, i: number) => {
         const t = sceneTransitions?.[i];
         return { transition: VALID_TRANSITIONS.includes(t) ? (t as TransitionPreset) : undefined };

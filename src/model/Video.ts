@@ -9,6 +9,10 @@ interface VideoAttributes{
     topic: string;
     genre: string;
     language: string;
+    imageStyle: string;
+    bgmPath?: string | null;
+    bgmVolume?: number | null;
+    srtPath?: string | null;
     duration: number | null;
     status: "draft" | "processing" |"rendering"|"completed"| "failed";
     progress: number;
@@ -26,6 +30,8 @@ export class Video extends Model<VideoAttributes, VideoCreationAttributes> imple
   declare userId: string;
   declare title: string;
   declare topic : string;
+  declare genre: string;
+  declare language: string;
   declare projectId: string;
   declare status: "draft" | "processing" |"rendering"|"completed"| "failed";
   declare progress: number;
@@ -35,6 +41,10 @@ export class Video extends Model<VideoAttributes, VideoCreationAttributes> imple
   declare duration: number | null;
   declare fileSize: number | null;
   declare errorMessage: string | null;
+  declare imageStyle: string;
+  declare bgmPath: string | null;
+  declare bgmVolume: number | null;
+  declare srtPath: string | null;
 }
 
 Video.init({
@@ -48,9 +58,41 @@ Video.init({
         type: DataTypes.UUID,
         allowNull: false
     },
+    title: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    topic:{
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    genre:{
+        type: DataTypes.STRING,
+        allowNull: false
+    },
     projectId:{
         type: DataTypes.UUID,
         allowNull: false,
+    },
+    language:{
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    imageStyle:{
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    bgmPath:{
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
+    bgmVolume: {
+        type: DataTypes.FLOAT,
+        allowNull: true,
+    },
+    srtPath: {
+        type: DataTypes.STRING,
+        allowNull: true,
     },
     status: {
         type: DataTypes.ENUM('draft', 'processing','rendering', 'completed', 'failed'),
