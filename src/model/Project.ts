@@ -6,11 +6,10 @@ interface ProjectAttributes{
     userId: string;
     title: string;
     topic: string;
-    status: 'draft' | 'processing' | 'completed' | 'failed';
 }
 
 export interface ProjectCreationAttributes extends Optional<ProjectAttributes,
-  'id' | 'status' 
+  'id' 
 > {}
 
 export class Project extends Model<ProjectAttributes, ProjectCreationAttributes> implements ProjectAttributes {
@@ -40,10 +39,6 @@ Project.init({
         type: DataTypes.TEXT,
         allowNull: false
     },
-    status: {
-        type: DataTypes.ENUM('draft', 'processing', 'completed', 'failed'),
-        defaultValue: 'draft'
-    }
 },{
     sequelize,
     tableName: "project",

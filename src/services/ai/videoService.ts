@@ -211,6 +211,34 @@ class VideoService {
     return null;
   }
 
+  /**
+   * Re-assemble a video from existing scene URLs with new transitions / subtitle style.
+   * No script / audio / image re-generation — just FFmpeg re-render.
+   */
+  async reAssembleVideo(
+    videoId: string,
+    scenes:  SceneWithMedia[],
+    title:   string,
+    options: VideoGenerationOptions = {},
+  ): Promise<{ videoPath: string; videoUrl: string }> {
+    // Reuse existing SRT if present (only skip when explicitly disabled)
+    const srtPath = path.join(this.outputDir, `${videoId}.srt`);
+    const useSrt = !options.disableSubtitles && fs.existsSync(srtPath);
+
+    console.log(`\n🔁 Re-assembling video: ${videoId}`);
+    console.log(`  Scenes: ${scenes.length}, SRT: ${useSrt ? 'yes' : 'no'}`);
+
+    const videoPath = await this.assembleVideo(
+      videoId,
+      scenes,
+      title,
+      useSrt ? srtPath : undefined,
+      options,
+    );
+
+    return { videoPath, videoUrl: `/output/${videoId}.mp4` };
+  }
+
   async regenerateSceneMedia(
     _videoId:        string,
     _sceneIndex:     number,

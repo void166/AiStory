@@ -5,12 +5,16 @@ interface VideoAttributes{
     id: string;
     userId: string;
     projectId: string;
-    status: "queued" | "processing" |"completed"| "failed";
+    title: string;
+    topic: string;
+    genre: string;
+    language: string;
+    duration: number | null;
+    status: "draft" | "processing" |"rendering"|"completed"| "failed";
     progress: number;
-    currentStep: string;
-    videoUrl?: string | null;
-    thumbnailUrl: string | null;
-    duration?: number | null;
+    current_version: string;
+    final_video_url: string | null;
+    thumbnail_url: string | null;
     fileSize?: number | null;
     errorMessage? : string | null;
 }
@@ -20,12 +24,14 @@ interface VideoCreationAttributes extends Optional<VideoAttributes, "id">{}
 export class Video extends Model<VideoAttributes, VideoCreationAttributes> implements VideoAttributes{
   declare id: string;
   declare userId: string;
+  declare title: string;
+  declare topic : string;
   declare projectId: string;
-  declare status: 'queued' | 'processing' | 'completed' | 'failed';
+  declare status: "draft" | "processing" |"rendering"|"completed"| "failed";
   declare progress: number;
-  declare currentStep: string;
-  declare videoUrl: string | null;
-  declare thumbnailUrl: string | null;
+  declare current_version: string;
+  declare final_video_url: string | null;
+  declare thumbnail_url: string | null;
   declare duration: number | null;
   declare fileSize: number | null;
   declare errorMessage: string | null;
@@ -47,22 +53,22 @@ Video.init({
         allowNull: false,
     },
     status: {
-        type: DataTypes.ENUM('queued', 'processing', 'completed', 'failed'),
-        defaultValue: 'queued'
+        type: DataTypes.ENUM('draft', 'processing','rendering', 'completed', 'failed'),
+        defaultValue: 'processing'
     },
     progress:{
         type: DataTypes.INTEGER,
         defaultValue: 0
     },
-    currentStep: {
+    current_version: {
         type: DataTypes.STRING(100),
         defaultValue: 'Initializing...'
     },
-    videoUrl: {
+    final_video_url: {
         type: DataTypes.TEXT,
         allowNull: true
     },
-    thumbnailUrl: {
+    thumbnail_url: {
         type: DataTypes.TEXT,
         allowNull: true
     },

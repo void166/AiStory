@@ -24,4 +24,11 @@ router.get('/:videoId', videoController.getVideoStatus);
  */
 router.post('/:videoId/regenerate/:sceneIndex', videoController.regenerateScene);
 
+/**
+ * @route   POST /api/video/:videoId/reassemble
+ * @desc    Re-render video with new transitions / subtitle style (no re-gen of media)
+ * @body    { scenes, title?, sceneTransitions?, subtitleStyle?, disableSubtitles?, bgmPath? }
+ */
+router.post('/:videoId/reassemble', videoController.reAssembleVideo);
+
 export default router;

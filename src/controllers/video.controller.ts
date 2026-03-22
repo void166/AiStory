@@ -1,6 +1,7 @@
 // controllers/videoController.ts
 import { Request, Response } from 'express';
 import videoService from '../services/ai/videoService';
+import type { TransitionPreset } from '../services/ai/effects';
 
 // Helper to safely extract string param
 function getStringParam(param: string | string[] | undefined): string | null {
@@ -135,6 +136,55 @@ class VideoController {
     } catch (error: any) {
       console.error('\n❌ Get video status error:', error);
       res.status(500).json({ success: false, error: error.message || 'Failed to get video status' });
+    }
+  }
+
+  async reAssembleVideo(req: Request, res: Response): Promise<void> {
+    try {
+      const videoId = getStringParam(req.params.videoId);
+      if (!videoId) {
+        res.status(400).json({ success: false, error: 'Video ID is required' });
+        return;
+      }
+
+      const {
+        scenes,
+        title,
+        sceneTransitions, // string[] — one per scene gap, e.g. ['fadeblack','wiperight',...]
+        subtitleStyle,
+        disableSubtitles,
+        bgmPath,
+        bgmVolume,
+        genre,
+      } = req.body;
+
+      if (!scenes || !Array.isArray(scenes) || scenes.length === 0) {
+        res.status(400).json({ success: false, error: 'scenes array is required' });
+        return;
+      }
+
+      const VALID_TRANSITIONS: TransitionPreset[] = ['fadeblack','fade','wiperight','wipeleft','hard-cut'];
+      // Build sceneEffects from sceneTransitions (only transition override, motion auto)
+      const sceneEffects: Array<{ transition?: TransitionPreset }> = scenes.map((_: unknown, i: number) => {
+        const t = sceneTransitions?.[i];
+        return { transition: VALID_TRANSITIONS.includes(t) ? (t as TransitionPreset) : undefined };
+      });
+
+      console.log(`\n🔁 Re-assemble request: ${videoId} / ${scenes.length} scenes`);
+
+      const result = await videoService.reAssembleVideo(videoId, scenes, title || 'Video', {
+        sceneEffects,
+        subtitleStyle:    subtitleStyle    || undefined,
+        disableSubtitles: disableSubtitles ?? false,
+        bgmPath:          bgmPath          || undefined,
+        bgmVolume:        bgmVolume        || '0.15',
+        genre:            genre            || undefined,
+      });
+
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      console.error('\n❌ Re-assemble error:', error);
+      res.status(500).json({ success: false, error: error.message || 'Re-assemble failed' });
     }
   }
 
