@@ -148,7 +148,7 @@ class AudioService {
       console.log("Text:", text.substring(0, 100));
 
       const response = await this.elevenLab.textToSpeech.convertWithTimestamps(
-        options?.voice_id || 'JBFqnCBsd6RMkjVDRZzb',
+        options?.voice_id || 'fBD19tfE58bkETeiwUoC',
         {
           text,
           modelId: 'eleven_multilingual_v2',

@@ -1,5 +1,6 @@
 import express from "express";
 import type { Request, Response } from "express";
+import path from "path";
 import { associations } from "./model/Associations";
 import sequelize from "./config/db";
 import authRouter from "./routes/authRoutes";
@@ -13,6 +14,10 @@ import videoRoute from './routes/videoRoutes'
 const app = express();
 
 app.use(express.json());
+
+// ── Serve generated videos as static files ───────────────────────────────────
+// Frontend accesses them at /output/<videoId>.mp4 (proxied through Vite in dev)
+app.use('/output', express.static(path.join(process.cwd(), 'output')));
 
 
 app.use('/api/auth',authRouter);

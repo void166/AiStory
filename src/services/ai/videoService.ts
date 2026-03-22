@@ -197,6 +197,7 @@ class VideoService {
         progress:  100,
         createdAt: new Date(),
         videoPath,
+        videoUrl:  `/output/${videoId}.mp4`,
         srtPath,
       };
     } catch (err: any) {
@@ -552,7 +553,7 @@ class VideoService {
     throw new Error(`Download failed after ${maxRetries} attempts: ${lastError?.message}`);
   }
 
-  // ─── FFmpeg assembler ────────────────────────────────────────────────────────
+
 
   private createVideoWithFFmpeg(
     mediaFiles: MediaFile[],
