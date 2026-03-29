@@ -1,7 +1,7 @@
 // controllers/audioController.ts
 import { Request, Response } from 'express';
 import audioService from '../services/ai/aud';
-import { ADDRGETNETWORKPARAMS } from 'node:dns';
+
 
 export class AudioController {
 
@@ -82,7 +82,8 @@ async generateAudio(req: Request, res: Response) {
       data: {
         audioUrl,
         format: result.format,
-        size: result.audioBuffer.length
+        size: result.audioBuffer.length,
+        words: result.words ?? [],
       }
     });
 
@@ -129,7 +130,7 @@ async testTextCleaning(req: Request, res: Response) {
       }
 
       // Generate audio
-      const result = await audioService.textToSpeechChimege(text, {voice_id});
+      const result = await audioService.textToSpeechChimege(text, {voice_id: voice_id || 'FEMALE3v2'});
 
       // Set headers for download
       res.setHeader('Content-Type', 'audio/wav');

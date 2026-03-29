@@ -1161,7 +1161,7 @@ aiResponse = provider == 'anthropic'
     console.log(" calling Anthropic");
 
     const chat = await this.anthropic.messages.create({
-      model: 'claude-3-haiku-20240307',
+      model: 'claude-haiku-4-5',
       max_tokens: 8000,
       system : "You are a viral documentary scriptwriter. Your narration is emotional, punchy, human. Output ONLY valid JSON. No markdown.",
       messages: [

@@ -72,7 +72,7 @@ class AudioService {
       const headers = {
         'Content-Type': 'text/plain; charset=utf-8',
         'token': this.chimege,
-        'voice-id': options?.voice_id || 'JBFqnCBsd6RMkjVDRZzb',
+        'voice-id': options?.voice_id || 'FEMALE3v2',
         'speed': String(options?.speed || 1.0),
         'pitch': String(options?.pitch || 1.0),
         'sample-rate': String(options?.sample_rate || 22050)
