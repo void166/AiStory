@@ -20,5 +20,6 @@ export const config = {
     CLOUD_API_SECRET: process.env.CLOUD_API_SECRET || "",
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
     ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || "",
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY || ""
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || ""
 }

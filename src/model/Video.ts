@@ -4,7 +4,7 @@ import sequelize from "../config/db";
 interface VideoAttributes{
     id: string;
     userId: string;
-    projectId: string;
+    projectId: string | null;
     title: string;
     topic: string;
     genre: string;
@@ -16,7 +16,6 @@ interface VideoAttributes{
     duration: number | null;
     status: "draft" | "processing" |"rendering"|"completed"| "failed";
     progress: number;
-    current_version: string;
     final_video_url: string | null;
     thumbnail_url: string | null;
     fileSize?: number | null;
@@ -32,7 +31,7 @@ export class Video extends Model<VideoAttributes, VideoCreationAttributes> imple
   declare topic : string;
   declare genre: string;
   declare language: string;
-  declare projectId: string;
+  declare projectId: string | null;
   declare status: "draft" | "processing" |"rendering"|"completed"| "failed";
   declare progress: number;
   declare current_version: string;
@@ -72,7 +71,7 @@ Video.init({
     },
     projectId:{
         type: DataTypes.UUID,
-        allowNull: false,
+        allowNull: true,
     },
     language:{
         type: DataTypes.STRING,
@@ -101,10 +100,6 @@ Video.init({
     progress:{
         type: DataTypes.INTEGER,
         defaultValue: 0
-    },
-    current_version: {
-        type: DataTypes.STRING(100),
-        defaultValue: 'Initializing...'
     },
     final_video_url: {
         type: DataTypes.TEXT,

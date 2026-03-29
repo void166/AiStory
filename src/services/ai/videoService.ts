@@ -7,6 +7,7 @@ import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 import axios from "axios";
+import { Scene } from "../../model/Scenes";
 
 import {
   OUT_W,
@@ -19,6 +20,8 @@ import {
   buildSceneFilter,
   buildSubtitleFilter,
 } from "./effects";
+import { optional } from "@elevenlabs/elevenlabs-js/core/schemas";
+import { DubbingTranscriptsResponseModelTranscriptFormat } from "@elevenlabs/elevenlabs-js/api";
 
 const mkdir    = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
@@ -43,8 +46,10 @@ export interface VideoGenerationOptions {
   sceneEffects?: Partial<SceneEffectConfig>[];
   subtitleStyle?:    SubtitleStyle;
   disableSubtitles?: boolean;
-  bgmPath?: string;       // FIX: made optional
-  bgmVolume?: string;     // FIX: made optional
+  bgmPath?: string;       
+  bgmVolume?: string;
+  scriptProvider? : 'anthropic' | 'groq';
+  ttsProvider?: 'elevenlabs' | 'gemini' | 'chimege';      
 }
 
 interface SceneWithMedia {
@@ -57,6 +62,8 @@ interface SceneWithMedia {
   imageUrl?:     string;
   audioDuration?: number;
   words?:        WordTiming[];
+  ttsProvider?: string;
+
 }
 
 interface VideoGenerationResult {
@@ -130,6 +137,7 @@ class VideoService {
       console.log(`Topic: ${topic}`);
       console.log(`Options:`, options);
 
+
       console.log("Script gen started...");
       const script = await scriptService.generate(
         topic,
@@ -138,11 +146,12 @@ class VideoService {
           duration: options.duration || 60,
           genre:    options.genre    || "cinematic",
           language: options.language || "en",
+          provider: options.scriptProvider ?? 'anthropic'
         },
       );
       console.log(`Script generated: ${script.script.length} scenes`);
 
-      // Start all image generations in parallel
+
       const imagePromises = script.script.map((scene) =>
         imageService.generateSingle(
           { time: scene.time, scene: scene.scene, description: scene.imagePrompt || scene.visual },
@@ -155,7 +164,7 @@ class VideoService {
       for (let i = 0; i < script.script.length; i++) {
         const scene = script.script[i];
         console.log(`[${i + 1}/${script.script.length}] Processing scene: ${scene.time}`);
-        const audioResults = await this.generateAudioForScenes([scene], options.voiceId);
+        const audioResults = await this.generateAudioForScenes([scene], options.voiceId, options.ttsProvider ?? 'gemini');
         processedScenes.push({ ...audioResults[0] } as SceneWithMedia);
       }
 
@@ -239,6 +248,54 @@ class VideoService {
     return { videoPath, videoUrl: `/output/${videoId}.mp4` };
   }
 
+
+async reGenImage(
+  id: string,
+  imagePrompt: string,
+): Promise<{ imageUrl: string }> {
+  const scene = await Scene.findOne({ where: { id } });
+  if (!scene) throw new Error(`Scene ${id} not found`);
+
+  scene.imagePrompt = imagePrompt;
+
+  const newImageUrl = await imageService.generateSingle(
+    { time: scene.time, scene: scene.scene, description: imagePrompt },
+    imagePrompt,
+  );
+
+  scene.imageUrl = newImageUrl;
+  await scene.save();
+
+  console.log(`  ✓ Image regenerated for scene ${id}: ${newImageUrl.substring(0, 60)}...`);
+  return { imageUrl: newImageUrl };
+}
+
+async reGenNarration(
+  id: string,
+  newText: string,
+): Promise<{ audioUrl: string; duration: number }> {
+  const scene = await Scene.findOne({ where: { id } });
+  if (!scene) throw new Error(`Scene ${id} not found`);
+
+  const provider = (scene.ttsProvider as 'elevenlabs' | 'gemini' | 'chimege') || 'gemini';
+  console.log(`  Regenerating narration with [${provider}]: ${newText.substring(0, 60)}...`);
+
+  const audioResult = await this.callTTS(provider, newText, scene.voiceId ?? undefined);
+
+  const filename = `audio_${this.generateVideoId()}_scene${scene.sceneIndex}_regen`;
+  const newAudioUrl = await audioService.uploadToCloudinary(audioResult.audioBuffer, filename);
+
+  scene.narration    = newText;
+  scene.audioUrl     = newAudioUrl;
+  scene.audioDuration = audioResult.duration ?? scene.audioDuration;
+  await scene.save();
+
+  console.log(`  ✓ Narration + audio updated for scene ${id}`);
+  return { audioUrl: newAudioUrl, duration: audioResult.duration ?? 0 };
+}
+
+
+
   async regenerateSceneMedia(
     _videoId:        string,
     _sceneIndex:     number,
@@ -271,22 +328,22 @@ class VideoService {
 
 
   private async generateAudioForScenes(
-    scenes:   any[],
+    scenes: any[],
     voiceId?: string,
+    ttsProvider: 'elevenlabs' | 'gemini' | 'chimege' = 'elevenlabs',
   ): Promise<SceneWithMedia[]> {
     const result: SceneWithMedia[] = [];
-
+  
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
+  
       try {
         console.log(`  [${i + 1}/${scenes.length}] Generating audio for: ${scene.time}`);
+  
+        let audioResult = await this.callTTS(ttsProvider, scene.narration, voiceId);
+        
 
-        const audioResult = await audioService.textToSpeechEleven(scene.narration, {
-          voice_id: voiceId || "JBFqnCBsd6RMkjVDRZzb",
-          speed: 1.0,
-          pitch: 1.0,
-        });
-
+  
         const filename = `audio_${this.generateVideoId()}_scene${i}`;
         const audioUrl = await audioService.uploadToCloudinary(
           audioResult.audioBuffer,
@@ -298,19 +355,60 @@ class VideoService {
           audioUrl,
           audioDuration: audioResult.duration,
           words: audioResult.words,
-        });
-
+          ttsProvider,
+        })
+  
         console.log(`    ✓ Audio uploaded: ${audioUrl.substring(0, 50)}...`);
         console.log(`    ℹ️  Raw audio duration: ${audioResult.duration}s`);
-
+  
         if (i < scenes.length - 1) await this.delay(500);
       } catch (error: any) {
         console.error(`    ✗ Audio generation failed for scene ${i + 1}: ${error.message}`);
-        result.push({ ...scene, audioUrl: undefined, audioDuration: undefined });
+        result.push({
+          ...scene,
+          audioUrl: undefined,
+          audioDuration: undefined,
+          words: [],
+        });
       }
     }
-
+  
     return result;
+  }
+
+
+  // private async callScriptSer(
+  //   provider: 'groq' | 'anthropic',
+  //   topic: string,
+  //   options: { duration: number; genre: string; language: string; imageStyle: string }
+  // ) {
+  //   return scriptService.generate
+  // }
+
+  private async callTTS(
+    provider: 'elevenlabs' | 'gemini' | 'chimege',
+    narration: string,
+    voiceId?: string
+  ){
+    switch (provider){
+      case 'elevenlabs':
+        return audioService.textToSpeechEleven(narration, {
+          voice_id: voiceId || 'JBFqnCBsd6RMkjVDRZzb',
+          speed: 1.0, pitch: 1.0
+        });
+        case 'gemini':
+          return audioService.textToSpeechGemini(narration,{
+            voice_name: voiceId || 'Charon'
+          });
+        case 'chimege':
+          return audioService.textToSpeechChimege(narration,{
+            voice_id: voiceId || 'JBFqnCBsd6RMkjVDRZzb',
+            speed: 1.0, pitch: 1.0
+          });
+
+          default: 
+          throw new Error(`Unknown TTS provider: ${provider}`);
+    }
   }
 
 
@@ -318,25 +416,78 @@ class VideoService {
   private async generateSRT(
     videoId: string,
     scenes:  SceneWithMedia[],
-  ): Promise<string> {
+  ): Promise<string | undefined> {   // ← undefined буцааж болно
     const srtPath = path.join(this.outputDir, `${videoId}.srt`);
-
+  
     let timeOffset = 0;
     const chunks: string[] = [];
-
+  
     for (const scene of scenes) {
+      const duration = scene.audioDuration ?? 0;
+  
       if (scene.words && scene.words.length > 0) {
+        // ElevenLabs / Gemini / Chimege (estimateWordTimings-тай)
         const chunk = audioService.wordsToSRT(scene.words, timeOffset);
         if (chunk.trim()) chunks.push(chunk);
+  
+      } else if (scene.narration && duration > 0) {
+        // Fallback: narration бүхэлд нь нэг subtitle блок болгох
+        const chunk = this.narrationToSRTBlock(scene.narration, timeOffset, duration);
+        chunks.push(chunk);
       }
-      timeOffset += scene.audioDuration ?? 0;
+  
+      timeOffset += duration;
     }
-
-    const merged = this.reindexSRT(chunks.join("\n\n"));
-    await writeFile(srtPath, merged, "utf-8");
-
+  
+    // Хоосон бол SRT файл үүсгэхгүй
+    if (chunks.length === 0) {
+      console.warn('  ⚠️  No subtitle content — skipping SRT generation');
+      return undefined;
+    }
+  
+    const merged = this.reindexSRT(chunks.join('\n\n'));
+    await writeFile(srtPath, merged, 'utf-8');
+  
     console.log(`SRT saved: ${srtPath}`);
     return srtPath;
+  }
+  
+  // Шинэ helper — нэг бүтэн narration-г нэг SRT блок болгоно
+  private narrationToSRTBlock(
+    narration: string,
+    startOffset: number,
+    duration: number,
+  ): string {
+    const start = this.secondsToSRTTime(startOffset);
+    const end   = this.secondsToSRTTime(startOffset + duration);
+    // Урт текстийг 42 тэмдэгтээр зүсэх (subtitle стандарт)
+    const lines = this.wrapText(narration, 42);
+    return `1\n${start} --> ${end}\n${lines}`;
+  }
+  
+  private secondsToSRTTime(seconds: number): string {
+    const h   = Math.floor(seconds / 3600);
+    const m   = Math.floor((seconds % 3600) / 60);
+    const s   = Math.floor(seconds % 60);
+    const ms  = Math.round((seconds % 1) * 1000);
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+  }
+  
+  private wrapText(text: string, maxLen: number): string {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+      if ((current + ' ' + word).trim().length > maxLen) {
+        if (current) lines.push(current);
+        current = word;
+      } else {
+        current = (current + ' ' + word).trim();
+      }
+    }
+    if (current) lines.push(current);
+
+    return lines.slice(0, 2).join('\n');
   }
 
   private reindexSRT(srt: string): string {
@@ -512,7 +663,7 @@ class VideoService {
           console.error(`    ✗ Image preparation failed: ${err.message}`);
         }
       } else {
-        console.warn(`    ⚠️  No image URL for scene ${i + 1} - skipping`);
+        console.warn(`      No image URL for scene ${i + 1} - skipping`);
       }
 
 
@@ -529,7 +680,7 @@ class VideoService {
       }
 
       if (!imagePath) {
-        console.warn(`    ⚠️  Skipping scene ${i + 1} - no valid image`);
+        console.warn(`      Skipping scene ${i + 1} - no valid image`);
         continue;
       }
 
@@ -546,11 +697,11 @@ class VideoService {
         } else {
           const fallback = scene.audioDuration ?? 0;
           sceneDuration  = Math.max(fallback, MIN_SCENE_DURATION);
-          console.log(`    ⚠️  ffprobe failed, using fallback: ${sceneDuration.toFixed(2)}s`);
+          console.log(`      ffprobe failed, using fallback: ${sceneDuration.toFixed(2)}s`);
         }
       } else {
         sceneDuration = MIN_SCENE_DURATION;
-        console.log(`    ℹ️  No audio, scene held for ${sceneDuration}s`);
+        console.log(`     No audio, scene held for ${sceneDuration}s`);
       }
 
       mediaFiles.push({
@@ -565,7 +716,7 @@ class VideoService {
       throw new Error("No valid scenes with images found. Cannot create video.");
     }
 
-    console.log(`\n  ✅ ${mediaFiles.length}/${scenes.length} scenes ready for video assembly`);
+    console.log(`\n  ${mediaFiles.length}/${scenes.length} scenes ready for video assembly`);
 
     return mediaFiles;
   }
@@ -622,12 +773,20 @@ class VideoService {
         ...(options.sceneEffects?.[i] ?? {}),
       }));
 
-      const subtitleFilter =
-        !options.disableSubtitles && srtPath
-          ? buildSubtitleFilter(srtPath, options.subtitleStyle)
-          : null;
+
+const srtExists = srtPath ? fs.existsSync(srtPath) : false;
+
+const subtitleFilter =
+  !options.disableSubtitles && srtPath && srtExists 
+    ? buildSubtitleFilter(srtPath, options.subtitleStyle)
+    : null;
+
+if (srtPath && !srtExists) {
+  console.warn(`  ⚠️  SRT файл олдсонгүй, хадмалгүй үүсгэж байна: ${srtPath}`);
+}
 
       let command = ffmpeg();
+      let fcScriptPath: string | null = null;
 
 
       if (mediaFiles.length === 1) {
@@ -718,7 +877,14 @@ class VideoService {
           filterComplex = filterComplex.replace(/;$/, "");
         }
 
-        command.complexFilter(filterComplex);
+        // Write the filter graph to a temp file to avoid argument-string
+        // parsing issues with complex expressions (zoompan, subtitles).
+        // -filter_complex_script reads the file directly — no shell quoting needed.
+        fcScriptPath = outputPath.replace('.mp4', '_fc.txt');
+        console.log('\n========== FILTER COMPLEX ==========\n' + filterComplex + '\n====================================\n');
+        fs.writeFileSync(fcScriptPath, filterComplex, 'utf8');
+
+        command.outputOptions(["-filter_complex_script", fcScriptPath]);
         command.outputOptions(["-map", "[outv]"]);
         if (audioIndices.length > 0) {
           command.outputOptions(["-map", "[outa]"]);
@@ -747,9 +913,19 @@ console.log(`  🎯 Output duration capped at: ${totalDuration.toFixed(2)}s`);
           "-ar",     "44100",
         ])
         .on("start",    (cmd) => console.log("FFmpeg:", cmd))
+        .on("stderr",   (line) => console.log("  ffmpeg stderr:", line))
         .on("progress", (p)   => { if (p.percent) console.log(`  ${Math.round(p.percent)}%`); })
-        .on("end",      ()    => { console.log("  ✓ Done"); resolve(); })
-        .on("error",    (err) => { console.error("  ✗ FFmpeg error:", err.message); reject(err); })
+        .on("end",      ()    => {
+          console.log("  ✓ Done");
+          if (fcScriptPath) try { fs.unlinkSync(fcScriptPath); } catch {}
+          resolve();
+        })
+        .on("error",    (err) => {
+          console.error("  ✗ FFmpeg error:", err.message);
+          // Keep fc.txt on error so we can inspect the filter content
+          // if (fcScriptPath) try { fs.unlinkSync(fcScriptPath); } catch {}
+          reject(err);
+        })
         .run();
     });
   }

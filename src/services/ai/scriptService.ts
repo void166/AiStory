@@ -1,10 +1,12 @@
 import Groq from 'groq-sdk';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config';
+import { messages } from '@elevenlabs/elevenlabs-js/api/resources/conversationalAi/resources/conversations';
 
 
-const {OPENAI_API_KEY,GROQ_API} =config;
+const {OPENAI_API_KEY,GROQ_API, ANTHROPIC_API_KEY} =config;
 
 interface ScriptScene {
   time: string;
@@ -28,11 +30,13 @@ interface ScriptResponse {
 
 class ScriptService {
   private groq: Groq;
-  private openai: OpenAI;
+  private anthropic: Anthropic;
+  // private openai: OpenAI;
 
   constructor() {
     this.groq = new Groq({ apiKey: GROQ_API});
-    this.openai = new OpenAI({apiKey: OPENAI_API_KEY});
+    this.anthropic = new Anthropic({apiKey: ANTHROPIC_API_KEY })
+    // this.openai = new OpenAI({apiKey: OPENAI_API_KEY});
   }
 
   private IMAGE_STYLE: Record<string, string> = {
@@ -1009,6 +1013,7 @@ class ScriptService {
     duration?: number;
     genre?: string;
     language?: string;
+    provider: 'groq' | 'anthropic';
   }): Promise<ScriptResponse> {
     const duration = options?.duration || 60;
     const genre = options?.genre || 'stoic';
@@ -1105,19 +1110,14 @@ JSON only. No markdown.
 `.trim();
 let aiResponse;
 
-aiResponse = await this.callGroqAPI(prompt);
+// aiResponse = await this.callGroqAPI(prompt);
 
-// try{
-//   const aiResponse = await this.callOpenAI(prompt);
-// }catch(err:any){
-//   console.error({
-//     success: false,
-//     err
-//   })
-//   console.log("openai failed,");
+const provider = options?.provider ?? 'anthropic';
+console.log(`using script provider : ${provider}`);
 
-//    aiResponse = await this.callGroqAPI(prompt);
-// }
+aiResponse = provider == 'anthropic'
+    ? await this.callAnthropicAPI(prompt)
+    : await this.callGroqAPI(prompt);
 
 
     if (!aiResponse) {
@@ -1139,25 +1139,51 @@ aiResponse = await this.callGroqAPI(prompt);
     return scriptData;
   }
 
-  private async callOpenAI(prompt: string): Promise<string> {
-    const chat = await this.openai.chat.completions.create({
-      model: "gpt-4o-mini",
+  // private async callOpenAI(prompt: string): Promise<string> {
+  //   const chat = await this.openai.chat.completions.create({
+  //     model: "gpt-4o-mini",
+  //     messages: [
+  //       { role: "system", content: "You are a viral short-video scriptwriter." },
+  //       { role: "user", content: prompt }
+  //     ],
+  //     temperature: 0.8,
+  //     max_tokens: 8000
+  //   });
+  
+  //   const content = chat.choices[0]?.message?.content;
+  
+  //   if (!content) throw new Error("Empty response from OpenAI");
+  
+  //   return content;
+  // }
+
+
+  async callAnthropicAPI(prompt:  string): Promise<string>{
+    console.log(" calling Anthropic");
+
+    const chat = await this.anthropic.messages.create({
+      model: 'claude-3-haiku-20240307',
+      max_tokens: 8000,
+      system : "You are a viral documentary scriptwriter. Your narration is emotional, punchy, human. Output ONLY valid JSON. No markdown.",
       messages: [
-        { role: "system", content: "You are a viral short-video scriptwriter." },
-        { role: "user", content: prompt }
+        {role : "user", content: prompt}
       ],
-      temperature: 0.8,
-      max_tokens: 8000
+      stream: false,
     });
-  
-    const content = chat.choices[0]?.message?.content;
-  
-    if (!content) throw new Error("Empty response from OpenAI");
-  
-    return content;
+
+    const text = chat.content
+      .filter((block)=> block.type === "text")
+      .map((block)=> block.text)
+      .join("");
+
+    if (!text) throw new Error('Empty response from Anthropic');
+
+    console.log(`Response: ${text.length} chars`);
+    return text;
+
   }
 
-  private async callGroqAPI(prompt: string): Promise<string> {
+  async callGroqAPI(prompt: string): Promise<string> {
     console.log('🤖 Calling Groq API...');
 
     const chat = await this.groq.chat.completions.create({

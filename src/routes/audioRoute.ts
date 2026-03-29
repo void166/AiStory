@@ -2,6 +2,7 @@
 import express from 'express';
 import audioController from '../controllers/audioController';
 import { authMiddleware } from '../middleware/auth.middleware';
+import { randomBytes } from 'node:crypto';
 
 const router = express.Router();
 
@@ -16,6 +17,8 @@ router.post('/generate-download',
 
   audioController.generateAndDownload.bind(audioController)
 );
+
+router.post('/generate-gemini', audioController.genAudioForGemini);
 
 // Generate from script
 router.post('/generate-from-script',

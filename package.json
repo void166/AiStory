@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@elevenlabs/elevenlabs-js": "^2.37.0",
     "@google/genai": "^1.43.0",
     "aws-sdk": "^2.1693.0",

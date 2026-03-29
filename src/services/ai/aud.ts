@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { config } from '../../config';
+import { GoogleGenAI } from '@google/genai';
+
 
 const { CHIMEGE_VOICE_API, CLOUDNAME, CLOUD_API_KEY, CLOUD_API_SECRET, ELEVENLABS_API_KEY } = config;
 
@@ -14,12 +16,19 @@ interface AudioGenerationResult {
 
 export interface WordTiming {
   word: string;
-  start: number; // seconds
-  end: number;   // seconds
+  start: number; 
+  end: number;  
 }
 
 interface ChimegeOptions {
   voice_id?: string;
+  speed?: number;
+  pitch?: number;
+  sample_rate?: number;
+}
+
+interface GeminiTtsOptions {
+  voice_name?: string;
   speed?: number;
   pitch?: number;
   sample_rate?: number;
@@ -31,16 +40,18 @@ class AudioService {
   private apiUrl: string;
   private chimege: string;
   private elevenLab: ElevenLabsClient;
+  private geminiTts: GoogleGenAI;
 
   constructor() {
     this.apiUrl = 'https://api.chimege.com/v1.2/synthesize';
     this.chimege = CHIMEGE_VOICE_API;
     this.elevenLab = new ElevenLabsClient({ apiKey: ELEVENLABS_API_KEY });
+    this.geminiTts = new GoogleGenAI({});
+    
   }
 
-  // ─── Chimege TTS (Монгол) ─────────────────────────────────────────────────
 
-  async textToSpeech(
+  async textToSpeechChimege(
     text: string,
     options?: ChimegeOptions
   ): Promise<AudioGenerationResult> {
@@ -113,6 +124,8 @@ class AudioService {
         console.log(`   Duration: ${duration}s`);
       } catch { duration = undefined; }
 
+      const words = duration ? this.estimateWordTimings(text, duration) : [];
+
       return { audioBuffer, format: 'wav', duration };
 
     } catch (error: any) {
@@ -135,10 +148,72 @@ class AudioService {
     }
   }
 
-  // ─── ElevenLabs TTS — timestamps-тэй хувилбар ────────────────────────────
-  // convertWithTimestamps() нь audio + alignment (character-level timing) буцаана
-  // → alignment-с word-level timing гаргаж, words[] дотор хадгална
 
+  async textToSpeechGemini(text: string, options?: GeminiTtsOptions): Promise<AudioGenerationResult> {
+    try {
+      console.log("\n=== GEMINI TTS + TIMESTAMPS ===");
+      console.log("Text:", text.substring(0, 100));
+
+      const prompt = `Say in Mongolian: ${text}`;
+
+      const GEMINI_VOICES = ['Kore','Aoede','Charon','Fenrir','Puck','Orbit',
+                             'Schedar','Alya','Despina','Erinome','Gacrux'];
+
+      const voiceName = GEMINI_VOICES.includes(options?.voice_name ?? '')
+        ? options!.voice_name!
+        : 'Kore';
+
+      console.log(`Using Gemini voice: ${voiceName}`);
+
+      const response = await this.geminiTts.models.generateContent({
+        model: 'gemini-2.5-flash-preview-tts',
+        contents: [{parts: [{text: prompt}]}],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        } as any,
+      });
+
+      // ── Extract raw PCM bytes ──────────────────────────────────────────────
+      const inlineData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      if (!inlineData?.data) {
+        throw new Error('Gemini TTS returned no audio data');
+      }
+      
+      const pcmBuffer = Buffer.from(inlineData.data, 'base64');
+      
+      if (pcmBuffer.length < 100) {
+        throw new Error('Invalid audio response from Gemini TTS');
+      }
+      
+      const SAMPLE_RATE     = 24_000;
+      const NUM_CHANNELS    = 1;
+      const BITS_PER_SAMPLE = 16;
+      
+      const audioBuffer = this.pcmToWav(pcmBuffer, SAMPLE_RATE, NUM_CHANNELS, BITS_PER_SAMPLE);
+      
+      // ── Duration ──────────────────────────────────────────────────────────
+      const numSamples = pcmBuffer.length / (BITS_PER_SAMPLE / 8);
+      const duration   = parseFloat((numSamples / SAMPLE_RATE).toFixed(2));
+      
+      // ── Word timings (estimated — Gemini TTS doesn't return alignment) ────
+      const words = this.estimateWordTimings(text, duration);
+      
+      console.log(`   PCM size : ${pcmBuffer.length} bytes → WAV: ${audioBuffer.length} bytes`);
+      console.log(`   Duration : ${duration.toFixed(2)}s`);
+      console.log(`   Words est: ${words.length}`);
+      
+      return { audioBuffer, format: 'wav', duration, words };
+      
+    } catch (err: any) {
+      console.error('\nGemini TTS ERROR:', err.message);
+      throw new Error(`Audio generation failed: ${err.message}`);
+    }
+  }
   async textToSpeechEleven(
     text: string,
     options?: ChimegeOptions
@@ -146,9 +221,12 @@ class AudioService {
     try {
       console.log("\n=== ELEVENLABS TTS + TIMESTAMPS ===");
       console.log("Text:", text.substring(0, 100));
+      const selectedVoiceId = options?.voice_id || 'fBD19tfE58bkETeiwUoC';
+
+      console.log(`using voice Id: ${selectedVoiceId}`)
 
       const response = await this.elevenLab.textToSpeech.convertWithTimestamps(
-        options?.voice_id || 'fBD19tfE58bkETeiwUoC',
+        selectedVoiceId,
         {
           text,
           modelId: 'eleven_multilingual_v2',
@@ -184,6 +262,59 @@ class AudioService {
       throw new Error(`Audio generation failed: ${error.message}`);
     }
   }
+
+  // ─── Raw PCM → WAV (44-byte header) ──────────────────────────────────────
+  private pcmToWav(
+    pcm: Buffer,
+    sampleRate: number,
+    numChannels: number,
+    bitsPerSample: number,
+  ): Buffer {
+    const byteRate   = sampleRate * numChannels * (bitsPerSample / 8);
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const dataSize   = pcm.length;
+    const header     = Buffer.alloc(44);
+
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataSize, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);              // fmt chunk size
+    header.writeUInt16LE(1, 20);               // AudioFormat = PCM
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
+
+    return Buffer.concat([header, pcm]);
+  }
+
+  // ─── Proportional word-timing estimator ──────────────────────────────────
+  // Gemini TTS alignment буцаадаггүй тул үгийн урттай пропорциональаар хуваарилна.
+  private estimateWordTimings(text: string, totalDuration: number): WordTiming[] {
+    const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+    if (!words.length || totalDuration <= 0) return [];
+
+    const totalChars = words.reduce((sum, w) => sum + w.length, 0);
+    const timings: WordTiming[] = [];
+    let cursor = 0;
+
+    for (const word of words) {
+      const wordDur = (word.length / totalChars) * totalDuration;
+      timings.push({
+        word,
+        start: parseFloat(cursor.toFixed(3)),
+        end:   parseFloat((cursor + wordDur).toFixed(3)),
+      });
+      cursor += wordDur;
+    }
+
+    return timings;
+  }
+
 
   // ─── ElevenLabs alignment → WordTiming[] ─────────────────────────────────
   // ElevenLabs character-level timing өгдөг:
@@ -309,14 +440,14 @@ class AudioService {
       const chunks = this.splitTextIntoChunks(narration, 500);
 
       if (chunks.length === 1) {
-        return await this.textToSpeech(chunks[0], options);
+        return await this.textToSpeechChimege(chunks[0], options);
       }
 
       const audioBuffers: Buffer[] = [];
 
       for (let i = 0; i < chunks.length; i++) {
         console.log(`Generating audio chunk ${i + 1}/${chunks.length}...`);
-        const result = await this.textToSpeech(chunks[i], options);
+        const result = await this.textToSpeechChimege(chunks[i], options);
         audioBuffers.push(result.audioBuffer);
         if (i < chunks.length - 1) await this.delay(1000);
       }
@@ -406,7 +537,7 @@ class AudioService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`Audio generation attempt ${attempt}/${maxRetries}...`);
-        return await this.textToSpeech(text, options);
+        return await this.textToSpeechChimege(text, options);
       } catch (error: any) {
         lastError = error;
         console.error(`Attempt ${attempt} failed:`, error.message);

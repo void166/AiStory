@@ -14,7 +14,9 @@ interface SceneAttributes {
   audioDuration:  number | null; 
   words:          string | null; 
   transitionType: string | null; 
-  motionEffect:   string | null; 
+  motionEffect:   string | null;
+  ttsProvider:    string; 
+  voiceId?: string;
 }
 
 interface SceneCreationAttributes extends Optional<SceneAttributes, "id"> {}
@@ -28,6 +30,7 @@ export class Scene
   declare sceneIndex:     number;
   declare time:           string;
   declare scene:          string;
+  declare ttsProvider:    string;
   declare narration:      string | null;
   declare imagePrompt:    string | null;
   declare imageUrl:       string | null;
@@ -36,6 +39,7 @@ export class Scene
   declare words:          string | null;
   declare transitionType: string | null;
   declare motionEffect:   string | null;
+  declare voiceId?: string | undefined;
 }
 
 Scene.init(
@@ -52,6 +56,14 @@ Scene.init(
     },
     sceneIndex: {
       type:      DataTypes.INTEGER,
+      allowNull: false,
+    },
+    ttsProvider:{
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    voiceId:{
+      type:DataTypes.STRING,
       allowNull: false,
     },
     time: {

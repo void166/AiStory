@@ -1,8 +1,50 @@
 // controllers/audioController.ts
 import { Request, Response } from 'express';
 import audioService from '../services/ai/aud';
+import { ADDRGETNETWORKPARAMS } from 'node:dns';
 
 export class AudioController {
+
+  async genAudioForGemini(req: Request, res: Response){
+    try{
+      const {text, voice_name}=req.body;
+
+      if (!text || text.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          message: 'Text is required'
+        });
+      }   
+
+      console.log("generating audio for gemini");
+
+      const result = await audioService.textToSpeechGemini(text,{voice_name});
+
+      const filename = `audio_gemini_${Date.now()}.wav`;
+      const audioUrl = await audioService.uploadToCloudinary(
+        result.audioBuffer,
+        filename
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Audio generated successfully',
+        data: {
+          audioUrl,
+          format: result.format,
+          size: result.audioBuffer.length
+        }
+      });
+    }catch(err:any){
+      console.error('Audio generation error:', err);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate audio',
+        error: err.message
+      });
+    }
+  }
 
    // POST /api/audio/generate
 
@@ -27,7 +69,7 @@ async generateAudio(req: Request, res: Response) {
       sample_rate
     });
 
-    // Upload to Cloudinary
+
     const filename = `audio_${Date.now()}.wav`;
     const audioUrl = await audioService.uploadToCloudinary(
       result.audioBuffer, 
@@ -76,7 +118,7 @@ async testTextCleaning(req: Request, res: Response) {
    */
   async generateAndDownload(req: Request, res: Response) {
     try {
-      const { text } = req.body;
+      const { text, voice_id } = req.body;
       console.log("Cloudinary key:", process.env.CLOUD_API_KEY);
       
       if (!text || text.trim() === '') {
@@ -87,7 +129,7 @@ async testTextCleaning(req: Request, res: Response) {
       }
 
       // Generate audio
-      const result = await audioService.textToSpeech(text);
+      const result = await audioService.textToSpeechChimege(text, {voice_id});
 
       // Set headers for download
       res.setHeader('Content-Type', 'audio/wav');

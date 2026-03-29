@@ -112,13 +112,13 @@ export function buildMotionFilter(
   const frames = Math.max(Math.round(durationSecs * FPS), 1);
 
   const motions: Record<MotionPreset, { z: string; x: string; y: string }> = {
-    'push-in':    { z: `1.0+0.15*(on/${frames})`,                       x: `iw/2-(iw/zoom/2)`,                        y: `ih/2-(ih/zoom/2)` },
-    'zoom-out':   { z: `max(1.15-0.15*(on/${frames}),1.0)`,             x: `iw/2-(iw/zoom/2)`,                        y: `ih/2-(ih/zoom/2)` },
-    'drift-left': { z: `1.1`,                                            x: `(iw/2-(iw/zoom/2))+on/${frames}*80`,      y: `ih/2-(ih/zoom/2)` },
-    'drift-right':{ z: `1.1`,                                            x: `(iw/2-(iw/zoom/2))-on/${frames}*80`,      y: `ih/2-(ih/zoom/2)` },
-    'float':      { z: `1.0+0.08*(on/${frames})`,                        x: `(iw/2-(iw/zoom/2))+on/${frames}*30`,     y: `(ih/2-(ih/zoom/2))+on/${frames}*20` },
-    'hook-reveal':{ z: `if(lt(on,15),1.3-on*0.02,1.0+on*0.0008)`,      x: `iw/2-(iw/zoom/2)`,                        y: `ih/2-(ih/zoom/2)` },
-    'static':     { z: `1.0`,                                            x: `iw/2-(iw/zoom/2)`,                        y: `ih/2-(ih/zoom/2)` },
+    'push-in':    { z: `1.0+0.15*(on/${frames})`,                  x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
+    'zoom-out':   { z: `max(1.15-0.15*(on/${frames}),1.0)`,        x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
+    'drift-left': { z: `1.1`,                                       x: `(iw/2-(iw/zoom/2))+on/${frames}*80`,  y: `ih/2-(ih/zoom/2)` },
+    'drift-right':{ z: `1.1`,                                       x: `(iw/2-(iw/zoom/2))-on/${frames}*80`,  y: `ih/2-(ih/zoom/2)` },
+    'float':      { z: `1.0+0.08*(on/${frames})`,                   x: `(iw/2-(iw/zoom/2))+on/${frames}*30`,  y: `(ih/2-(ih/zoom/2))+on/${frames}*20` },
+    'hook-reveal':{ z: `if(lt(on,15),1.3-on*0.02,1.0+on*0.0008)`, x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
+    'static':     { z: `1.0`,                                       x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
   };
 
   const { z, x, y } = motions[preset] ?? motions['static'];
@@ -126,7 +126,7 @@ export function buildMotionFilter(
     `zoompan=z='${z}':x='${x}':y='${y}':d=${frames}:s=${OUT_W}x${OUT_H}:fps=${FPS}`;
 
   if (impact) {
-    filter += `,scale=${OUT_W * 1.05}:${OUT_H * 1.05},crop=${OUT_W}:${OUT_H}`;
+    filter += `,scale=${Math.round(OUT_W * 1.05)}:${Math.round(OUT_H * 1.05)},crop=${OUT_W}:${OUT_H}`;
   }
 
   return filter;
@@ -195,22 +195,33 @@ export function buildSubtitleFilter(
   const shadow   = '&H80000000';
   const border   = s.backgroundBox ? 3 : 1;
 
-  let boxStr = '';
+  let extraStyle = '';
   if (s.backgroundBox) {
     const alpha = Math.round((1 - s.boxOpacity) * 255)
       .toString(16).padStart(2, '0').toUpperCase();
     const raw = s.boxColor.replace('#', '');
-    boxStr = `,BackColour=&H${alpha}${raw.slice(4, 6)}${raw.slice(2, 4)}${raw.slice(0, 2)}`;
+    extraStyle = `,BackColour=&H${alpha}${raw.slice(4, 6)}${raw.slice(2, 4)}${raw.slice(0, 2)}`;
   }
 
-  const escaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+  const escaped = srtPath
+    .replace(/\\/g, '/')     
+    .replace(/'/g, "'\\\\''") 
+    .replace(/:/g, '\\:');    
 
-  return (
-    `subtitles='${escaped}':` +
-    `force_style='FontName=${s.fontName},FontSize=${s.fontSize},Bold=${s.bold ? 1 : 0},` +
-    `PrimaryColour=${primary},OutlineColour=${outline},` +
-    `ShadowColour=${shadow},BorderStyle=${border},` +
-    `Outline=${s.outlineThickness},Shadow=${s.shadowDepth},` +
-    `Alignment=${s.alignment},MarginV=${s.marginV}${boxStr}'`
-  );
+  const styleProps = [
+    `FontName=${s.fontName}`,
+    `FontSize=${s.fontSize}`,
+    `Bold=${s.bold ? 1 : 0}`,
+    `PrimaryColour=${primary}`,
+    `OutlineColour=${outline}`,
+    `ShadowColour=${shadow}`,
+    `BorderStyle=${border}`,
+    `Outline=${s.outlineThickness}`,
+    `Shadow=${s.shadowDepth}`,
+    `Alignment=${s.alignment}`,
+    `MarginV=${s.marginV}`,
+  ].join(',') + extraStyle;
+
+
+  return `subtitles='${escaped}':force_style='${styleProps}'`;
 }

@@ -15,8 +15,6 @@ const app = express();
 
 app.use(express.json());
 
-// ── Serve generated videos as static files ───────────────────────────────────
-// Frontend accesses them at /output/<videoId>.mp4 (proxied through Vite in dev)
 app.use('/output', express.static(path.join(process.cwd(), 'output')));
 
 
