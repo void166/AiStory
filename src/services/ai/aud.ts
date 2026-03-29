@@ -126,7 +126,7 @@ class AudioService {
 
       const words = duration ? this.estimateWordTimings(text, duration) : [];
 
-      return { audioBuffer, format: 'wav', duration };
+      return { audioBuffer, format: 'wav', duration, words };
 
     } catch (error: any) {
       console.error('\n CHIMEGE TTS ERROR:', error.message);

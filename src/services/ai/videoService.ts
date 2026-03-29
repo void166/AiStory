@@ -53,17 +53,18 @@ export interface VideoGenerationOptions {
 }
 
 interface SceneWithMedia {
-  time:          string;
-  scene:         string;
-  visual:        string;
-  narration:     string;
-  imagePrompt:   string;
-  audioUrl?:     string;
-  imageUrl?:     string;
+  time:           string;
+  scene:          string;
+  visual:         string;
+  narration:      string;
+  imagePrompt:    string;
+  audioUrl?:      string;
+  imageUrl?:      string;
   audioDuration?: number;
-  words?:        WordTiming[];
-  ttsProvider?: string;
-
+  words?:         WordTiming[];
+  ttsProvider?:   string;
+  transition?:    TransitionPreset;
+  motionEffect?:  string;
 }
 
 interface VideoGenerationResult {
@@ -196,6 +197,16 @@ class VideoService {
         srtPath,
         options,
       );
+
+      // Attach transition and motionEffect to each scene so they get saved to DB
+      const narrationScenes = processedScenes.map((s) => ({ narration: s.narration }));
+      const sceneEffects    = assignSceneEffects(narrationScenes, options.globalTransition);
+      sceneEffects.forEach((eff, i) => {
+        if (processedScenes[i]) {
+          processedScenes[i].transition   = eff.transition;
+          processedScenes[i].motionEffect = eff.motion;
+        }
+      });
 
       return {
         videoId,
@@ -402,7 +413,7 @@ async reGenNarration(
           });
         case 'chimege':
           return audioService.textToSpeechChimege(narration,{
-            voice_id: voiceId || 'JBFqnCBsd6RMkjVDRZzb',
+            voice_id: voiceId || 'FEMALE3v2',
             speed: 1.0, pitch: 1.0
           });
 
@@ -840,12 +851,13 @@ if (srtPath && !srtExists) {
         for (let i = 1; i < N; i++) {
           cumulativeDuration += mediaFiles[i - 1].duration;
           const offset     = Math.max(0, cumulativeDuration - FADE_DURATION * i);
-          const transition = effectConfigs[i - 1].transition;
+          const rawTransition = effectConfigs[i-1]?.transition || "fade";
+
           const isLast     = i === N - 1;
           const out        = isLast ? (subtitleFilter ? "outv_raw" : "outv") : `v${i}`;
 
-          const xfadeTransition = transition === "hard-cut" ? "fade" : transition;
-          const xfadeDuration   = transition === "hard-cut" ? 0.03 : FADE_DURATION;
+          const xfadeTransition = rawTransition === "hard-cut" ? "fade" : rawTransition;
+          const xfadeDuration   = rawTransition === "hard-cut" ? 0.03 : FADE_DURATION;
 
           filterComplex +=
             `[${prev}][sv${i}]xfade=transition=${xfadeTransition}:duration=${xfadeDuration}:offset=${offset}[${out}];`;
@@ -877,14 +889,16 @@ if (srtPath && !srtExists) {
           filterComplex = filterComplex.replace(/;$/, "");
         }
 
-        // Write the filter graph to a temp file to avoid argument-string
-        // parsing issues with complex expressions (zoompan, subtitles).
-        // -filter_complex_script reads the file directly — no shell quoting needed.
+        // Write filter complex to a file for debugging, then use the new
+        // FFmpeg 7.x syntax (-/filter_complex file) instead of the deprecated
+        // -filter_complex_script which was removed in FFmpeg 7.1.x.
         fcScriptPath = outputPath.replace('.mp4', '_fc.txt');
         console.log('\n========== FILTER COMPLEX ==========\n' + filterComplex + '\n====================================\n');
         fs.writeFileSync(fcScriptPath, filterComplex, 'utf8');
 
-        command.outputOptions(["-filter_complex_script", fcScriptPath]);
+        // Use fluent-ffmpeg's complexFilter() which passes -filter_complex inline,
+        // supported by all FFmpeg versions and avoids the deprecated _script option.
+        command.complexFilter(filterComplex);
         command.outputOptions(["-map", "[outv]"]);
         if (audioIndices.length > 0) {
           command.outputOptions(["-map", "[outa]"]);
