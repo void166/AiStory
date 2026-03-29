@@ -3,7 +3,6 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config';
-import { messages } from '@elevenlabs/elevenlabs-js/api/resources/conversationalAi/resources/conversations';
 
 
 const {OPENAI_API_KEY,GROQ_API, ANTHROPIC_API_KEY} =config;
@@ -1013,7 +1012,7 @@ class ScriptService {
     duration?: number;
     genre?: string;
     language?: string;
-    provider: 'groq' | 'anthropic';
+    provider?: 'groq' | 'anthropic';
   }): Promise<ScriptResponse> {
     const duration = options?.duration || 60;
     const genre = options?.genre || 'stoic';
