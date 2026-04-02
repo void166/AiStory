@@ -44,8 +44,8 @@ class ScriptService {
     modernCartoon: "Modern 2D vector animation style, clean thick outlines, bright vibrant gradients, whimsical and friendly character design",
     disney: "Disney-Pixar 3D render style, cinematic lighting, subsurface scattering, expressive large eyes, 8k resolution octane render",
     anime: "High-quality Japanese anime film still, Makoto Shinkai style, detailed backgrounds, lens flares, atmospheric perspective, soft cinematic lighting",
-    simpsons: ""
-  }
+    simpsons: "The Simpsons inspired cartoon style, flat cel shading, bold black outlines, bright yellow skin tones, simple suburban cartoon background design, exaggerated humorous facial expressions", 
+   }
 
 
   private GENRE_RULES : Record<string, string> = {
@@ -1030,11 +1030,11 @@ Topic: "${topic}"
 Genre: ${genre}
 Target duration: ~${duration} seconds
 
-TOPIC CONTEXT — research everything you know about this topic and use it:
-- Use REAL names, REAL events, REAL details from the topic
-- Every narration line must be SPECIFICALLY about "${topic}" — not generic
-- If the topic is a person, team, or event — reference their actual story, achievements, struggles
-- Never write lines that could apply to ANY other topic — make it unique to "${topic}"
+TOPIC CONTEXT:
+- Use only widely known or high-confidence facts about "${topic}"
+- Do not invent names, dates, awards, places, or achievements
+- If uncertain about a fact, stay specific but avoid unverifiable claims
+- Every narration line must clearly connect to "${topic}"
 
 NARRATION STYLE — match this EXACTLY:
 ---
@@ -1063,13 +1063,13 @@ STRICT RULES — never break these:
 - NEVER use "…" alone as narration — ellipsis is only allowed inside a sentence
 - NEVER pad time with silent or empty scenes
 - The script ends on the last real narration line — no filler at the end
-
 IMAGE PROMPT RULES (CRITICAL — read every rule carefully):
 
 SPECIFICITY:
 - imagePrompt MUST name the actual subject — never use generic descriptions
 - BAD: "A dramatic scene of a team standing together" ← rejected, could be any team
-- GOOD: "The Mongolz CS2 team in anime style, five players in a dark arena, Mongolian flag colors, determined expressions, dramatic backlight" ← specific and vivid
+- GOOD: "The Mongolz CS2 team in anime style, five players in a dark arena, Mongolian flag colors, 
+  determined expressions, dramatic backlight" ← specific and vivid
 
 EMOTION-TO-VISUAL TRANSLATION:
 - Take the emotion/meaning of the narration and express it through the ACTUAL topic subject
@@ -1077,14 +1077,25 @@ EMOTION-TO-VISUAL TRANSLATION:
 - If narration = struggle → show the subject under pressure, not a random struggle
 - Camera angle, lighting, color palette must reinforce the narration's emotion
 
-COMPOSITION (MANDATORY — image generation model will follow this):
-- Every imagePrompt must end with: "Portrait vertical composition, subject centered, all elements fully visible within frame, no edge cropping, safe margins on all sides"
-- Specify camera framing: close-up / medium shot / wide shot — choose what matches the scene
-- Specify lighting: e.g. "dramatic rim light from behind", "soft golden hour", "cold blue night light"
-- Specify mood/atmosphere: foggy, tense, epic, melancholic, triumphant, etc.
+IMAGE PROMPT STRUCTURE — every imagePrompt MUST follow this exact order:
+1. SUBJECT: Who/what is the main focus — be specific, name them
+2. ACTION/POSE: What are they doing, what expression, what body language
+3. ENVIRONMENT: Where — specific location details, time of day, weather, props
+4. CAMERA: close-up / medium shot / wide shot / aerial — choose what fits the scene
+5. LIGHTING: e.g. "dramatic rim light from behind", "soft golden hour", "cold blue night light", 
+   "single streetlamp casting long shadows"
+6. COLOR PALETTE: e.g. "deep blacks and sickly yellows", "cold blues and grays", 
+   "high-contrast red and black"
+7. MOOD/ATMOSPHERE: e.g. "eerie and quiet", "tense and suffocating", "triumphant and epic"
+8. STYLE: ${stylePrompt}
+9. COMPOSITION (MANDATORY, always last): "Portrait vertical composition, subject centered, 
+   all elements fully visible within frame, no edge cropping, safe margins on all sides."
+
+MINIMUM LENGTH: Every imagePrompt must be at least 60 words. Short prompts will be rejected.
 
 PORTRAIT FORMAT REMINDER:
-- The image will be cropped to 1080×1920 (portrait). Always design the scene with a VERTICAL canvas in mind
+- The image will be cropped to 1080×1920 (portrait). Always design the scene with a VERTICAL 
+  canvas in mind
 - Place the main subject in the CENTER — never at the edges
 
 Visual style for ALL imagePrompts: ${stylePrompt}
@@ -1093,6 +1104,14 @@ Return ONLY this JSON:
 {
   "title": "...",
   "duration": "total seconds",
+  "thumbnailConcept": [
+    {
+      "focus": "",
+      "emotion": "",
+      "visualHook": "",
+      "textOverlay": ""
+   }
+  ],
   "script": [
     {
       "time": "0:00-0:02",

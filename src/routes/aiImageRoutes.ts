@@ -5,6 +5,11 @@ import { authMiddleware } from '../middleware/auth.middleware';
 
 const router = express.Router();
 
+
+router.post('/generate-thumbnail',
+  aiImageController.thumbnail.bind(aiImageController)
+);
+
 // Generate images from script
 router.post('/generate-from-script',
 

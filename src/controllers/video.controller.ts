@@ -103,6 +103,11 @@ class VideoController {
           progress: 100,
           final_video_url: result.videoUrl || null,
           srtPath: result.srtPath || null,
+          thumbnail_url:        result.thumbnail?.thumbnailUrl   || null,
+          Tfocus:      result.thumbnail?.focus,
+          Temotion:    result.thumbnail?.emotion ,
+          ToverLay:    result.thumbnail?.textOverlay,
+          TvisualHook:result.thumbnail?.visualHook,
         });
 
         let createdScenes: any[] = [];
@@ -263,14 +268,33 @@ class VideoController {
         return;
       }
 
-      const video = await videoService.getVideoStatus(videoId);
+      const [videoResult, videoRow] = await Promise.all([
+        videoService.getVideoStatus(videoId),
+        Video.findByPk(videoId, { attributes: ['id','topic','genre','bgmPath','bgmVolume','imageStyle','language'] }),
+      ]);
 
-      if (!video) {
+      if (!videoResult || !videoRow) {
         res.status(404).json({ success: false, error: "Video not found" });
         return;
       }
 
-      res.status(200).json({ success: true, data: video });
+      // Merge extra fields the frontend (EditStudio) needs
+      const responseData = {
+        ...videoResult,
+        topic:   videoRow.topic,
+        dbId:    videoRow.id,
+        options: {
+          genre:   videoRow.genre,
+          bgmPath: videoRow.bgmPath ?? '',
+        },
+        // Attach DB scene ids to each scene for reGenImage / reGenNarration
+        scenes: videoResult.scenes.map((s: any) => ({
+          ...s,
+          audioDuration: s.audioDuration ?? 0,
+        })),
+      };
+
+      res.status(200).json({ success: true, data: responseData });
     } catch (error: any) {
       console.error("\n❌ Get video status error:", error);
       res
@@ -409,7 +433,12 @@ class VideoController {
         where: { userId },
         attributes: [
           "id", "title", "topic", "genre", "language", "imageStyle",
-          "status", "duration", "final_video_url", "thumbnail_url",
+          "status", "duration", "final_video_url",
+          "thumbnail_url",        
+          "thumbnail_focus",      
+          "thumbnail_emotion",    
+          "thumbnail_overlay",    
+          "thumbnail_visual_hook",
           "bgmPath", "bgmVolume", "createdAt", "updatedAt",
         ],
         order:  [["createdAt", "DESC"]],

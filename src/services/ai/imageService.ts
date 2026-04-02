@@ -16,6 +16,13 @@ interface ScriptScene {
   description: string;
 }
 
+export interface ThumbnailConcept{
+  focus: string,
+  emotion: string,
+  visualHook: string,
+  textOverlay: string
+}
+
 interface BackgroundImage {
   id: number;
   prompt: string;
@@ -32,6 +39,14 @@ interface GeneratedImage {
   prompt: string;
   backgroundImageId?: number;
   generatedAt: Date;
+}
+interface GeneratedThumbnail{
+  focus: string,
+  emotion: string,
+  visualHook: string,
+  textOverlay: string,
+  thumbnailUrl: string,
+  generatedAt: Date,
 }
 
 interface ImageGenerationOptions {
@@ -103,6 +118,102 @@ class ImageService {
   //   }
   // }
 
+
+    private THUMBNAIL_STYLE: Record<string, string> = {
+      comic:
+        "American comic-book poster style, bold black ink contours, graphic shadow shapes, punchy saturated colors, sharp visual hierarchy, dramatic halftone texture, stylized but readable action framing",
+    
+      creepyComic:
+        "dark horror-comic poster style, scratchy ink texture, warped visual tension, dirty desaturated palette, oppressive shadow masses, eerie negative space, unsettling focal composition, disturbing but highly readable imagery",
+    
+      modernCartoon:
+        "premium modern cartoon poster style, clean contour lines, simplified high-readability shapes, vibrant polished colors, expressive character posing, friendly but cinematic framing, social-media-ready cover illustration",
+    
+      stylized3DAnimation:
+        "cinematic stylized 3D animated-film poster style, expressive faces, polished render quality, rich color depth, soft global illumination, emotionally clear storytelling, premium animated key-art look",
+    
+      anime:
+        "cinematic anime key-visual style, emotionally intense character framing, polished cel shading, atmospheric depth, vivid highlight contrast, elegant background simplification, premium film-poster composition",
+    
+      satiricalFlatCartoon:
+        "flat satirical cartoon poster style, bold clean outlines, flat cel shading, exaggerated comedic expressions, bright readable palette, humorous character-driven staging, iconic TV-poster energy",
+    
+      cinematic:
+        "cinematic blockbuster poster style, dramatic lens-driven framing, deep contrast, realistic texture emphasis, intense emotional focus, premium key art lighting, sharp subject isolation, movie-poster level impact",
+    
+      darkCinematic:
+        "dark thriller poster style, cold moody palette, deep blacks, razor-sharp highlights, ominous contrast, suspense-heavy framing, tense cinematic realism, visually oppressive but highly readable focal design",
+    
+      hyperReal:
+        "hyper-real poster style, ultra-detailed textures, dramatic realism, premium studio lighting, crystal-clear subject emphasis, visually intense emotional realism, luxury poster-quality finish",
+    
+      viralShock:
+        "high-click viral thumbnail style, exaggerated emotion, instant visual readability, aggressive contrast separation, oversized focal expression, simplified background storytelling, engineered for maximum attention in a fast-scrolling feed",
+    
+      mystery:
+        "mystery-poster style, selective revelation lighting, suspenseful shadow composition, restrained palette, intriguing symbolic focal detail, eerie cinematic silence, curiosity-driven visual storytelling",
+    
+      historicalEpic:
+        "historical epic poster style, monumental scale, heroic or tragic focal staging, rich material textures, dramatic golden or storm-lit atmosphere, painterly realism, prestigious cinematic period-drama energy",
+    
+      neonDrama:
+        "neon-charged dramatic poster style, luminous rim lighting, electric accent colors, deep urban shadows, high-impact modern contrast, stylish synthetic atmosphere, bold futuristic cover composition"
+    };
+
+
+    async generateThumbnail(
+      thumbnail: ThumbnailConcept,
+      style: string = 'cinematic'
+    ): Promise<GeneratedThumbnail>{
+      console.log(`starting generating thumbnail pic`);
+      console.log(`style: ${style}`);
+      console.log(`emotion: ${thumbnail.emotion}`);
+      console.log(`focus: ${thumbnail.focus}`);
+      console.log(`textOverlay: ${thumbnail.textOverlay}`);
+      console.log(`visualHook: ${thumbnail.visualHook}`);
+
+      const stylePrompt =
+      this.THUMBNAIL_STYLE[style] ??
+      this.THUMBNAIL_STYLE['cinematic'];
+
+      const imagePrompt = `
+      Thumbnail concept:
+      Focus:      ${thumbnail.focus}
+      Emotion:    ${thumbnail.emotion}
+      Visual hook: ${thumbnail.visualHook}
+      
+      Visual style: ${stylePrompt}
+      
+      COMPOSITION RULES (mandatory):
+      - Portrait vertical format, 1080x1920, mobile-first
+      - Main subject centered horizontally and vertically
+      - Leave at least 10% safe margin on left and right edges
+      - Nothing important cropped at the edges
+      - Bold, high-contrast visuals engineered for instant attention in a feed
+      - No text, watermarks, or UI overlays on the image
+        `.trim();
+
+        const dummyScene: ScriptScene = {
+          time: '0:00',
+          scene: thumbnail.focus,
+          description: thumbnail.visualHook,
+        };
+      
+        const thumbnailUrl = await this.generateSingle(
+          dummyScene,
+          imagePrompt,   // customPrompt — overrides buildPrompt()
+        );
+      
+        return {
+          focus:        thumbnail.focus,
+          emotion:      thumbnail.emotion,
+          visualHook:   thumbnail.visualHook,
+          textOverlay:  thumbnail.textOverlay,
+          thumbnailUrl,
+          generatedAt:  new Date(),
+        };
+      
+    }
   async generateFromScript(
     scenes: ScriptScene[],
     backgroundImages: BackgroundImage[]

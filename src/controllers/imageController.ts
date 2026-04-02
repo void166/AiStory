@@ -3,6 +3,43 @@ import { Request, Response } from 'express';
 import imageService from '../services/ai/imageService';
 
 export class AIImageController {
+
+
+  async thumbnail(req: Request, res: Response) {
+    try {
+      const { focus, emotion, textOverlay, visualHook, style } = req.body;
+  
+      // Validate
+      if (!focus || !emotion || !visualHook) {
+        return res.status(400).json({
+          success: false,
+          message: 'focus, emotion, and visualHook are required'
+        });
+      }
+  
+      console.log(`Generating thumbnail...`);
+  
+      const result = await imageService.generateThumbnail(
+        { focus, emotion, textOverlay, visualHook },
+        style || 'cinematic'
+      );
+  
+      return res.status(200).json({
+        success: true,
+        message: 'Thumbnail generated successfully',
+        data: result
+      });
+  
+    } catch (err: any) {
+      console.error('Thumbnail generation error:', err);
+  
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate thumbnail',
+        error: err.message
+      });
+    }
+  }
   /**
    * Generate images from script
    * POST /api/ai/image/generate-from-script

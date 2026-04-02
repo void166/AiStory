@@ -8,6 +8,7 @@ import path from "path";
 import { promisify } from "util";
 import axios from "axios";
 import { Scene } from "../../model/Scenes";
+import { Video } from "../../model/Video";
 
 import {
   OUT_W,
@@ -20,8 +21,10 @@ import {
   buildSceneFilter,
   buildSubtitleFilter,
 } from "./effects";
-import { optional } from "@elevenlabs/elevenlabs-js/core/schemas";
-import { DubbingTranscriptsResponseModelTranscriptFormat } from "@elevenlabs/elevenlabs-js/api";
+
+
+
+
 
 const mkdir    = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
@@ -33,6 +36,14 @@ const readdir  = promisify(fs.readdir);
 const MIN_SCENE_DURATION = 5; 
 const FADE_DURATION      = 0.5; 
 
+interface GeneratedThumbnail{
+  focus: string,
+  emotion: string,
+  visualHook: string,
+  textOverlay: string,
+  thumbnailUrl: string,
+  generatedAt: Date,
+}
 
 
 export interface VideoGenerationOptions {
@@ -40,6 +51,7 @@ export interface VideoGenerationOptions {
   genre?:        string;
   language?:     string;
   imageStyle?:   string;
+  thumbnail?: GeneratedThumbnail;
   voiceId?:      string;
   outputPath?:   string;
   globalTransition?: TransitionPreset;
@@ -74,6 +86,7 @@ interface VideoGenerationResult {
   scenes:    SceneWithMedia[];
   status:    "processing" | "completed" | "failed";
   progress:  number;
+  thumbnail?: GeneratedThumbnail;  
   createdAt: Date;
   videoPath?: string;
   videoUrl?:  string;
@@ -96,6 +109,8 @@ class VideoService {
   constructor() {
     this.ensureDirectories();
   }
+
+
 
   private BGM_LIBRARY: Record<string, string> = {
     "scary1": path.join(process.cwd(), "src", "services", "bgMusic", "scary1.mp3"),
@@ -152,6 +167,21 @@ class VideoService {
       );
       console.log(`Script generated: ${script.script.length} scenes`);
 
+      let thumbnail: GeneratedThumbnail | undefined;
+
+      const rawThumbnail = script.thumbnailConcept?.[0];
+      if(rawThumbnail){
+        console.log("generating thumbnail");
+        try{
+          thumbnail = await imageService.generateThumbnail(
+            rawThumbnail,
+            options.imageStyle || 'cinematic'
+          );
+          console.log(`thumbnail generated: ${thumbnail.thumbnail_url}`);
+        }catch(err:any){
+          console.warn(`Thumbnail generation failed: ${err.message}`);
+        }
+      }
 
       const imagePromises = script.script.map((scene) =>
         imageService.generateSingle(
@@ -219,6 +249,7 @@ class VideoService {
         videoPath,
         videoUrl:  `/output/${videoId}.mp4`,
         srtPath,
+        thumbnail,
       };
     } catch (err: any) {
       console.error(`Video generation failed: ${err.message}`);
@@ -227,14 +258,50 @@ class VideoService {
   }
 
   async getVideoStatus(videoId: string): Promise<VideoGenerationResult | null> {
-    console.log(`Fetching video status: ${videoId}`);
-    return null;
+    try {
+      const video = await Video.findByPk(videoId);
+      if (!video) return null;
+
+      const scenes = await Scene.findAll({
+        where: { videoId },
+        order: [['sceneIndex', 'ASC']],
+      });
+
+      const mappedScenes: SceneWithMedia[] = scenes.map(s => ({
+        time:          s.time,
+        scene:         s.scene,
+        visual:        s.imagePrompt ?? '',
+        narration:     s.narration   ?? '',
+        imagePrompt:   s.imagePrompt ?? '',
+        imageUrl:      s.imageUrl    ?? undefined,
+        audioUrl:      s.audioUrl    ?? undefined,
+        audioDuration: s.audioDuration ?? 0,
+        words:         s.words ? JSON.parse(s.words) : [],
+        ttsProvider:   s.ttsProvider  ?? 'gemini',
+        transition:    (s.transitionType as TransitionPreset) ?? undefined,
+        motionEffect:  s.motionEffect  ?? undefined,
+        // Attach DB id so the frontend can use reGenImage / reGenNarration
+        ...(s.id ? { id: s.id } : {}),
+      }));
+
+      return {
+        videoId:   video.id,
+        title:     video.title,
+        duration:  String(video.duration ?? 0),
+        scenes:    mappedScenes,
+        status:    'completed',
+        progress:  100,
+        createdAt: new Date(),
+        videoUrl:  video.final_video_url ?? undefined,
+        srtPath:   video.srtPath ?? undefined,
+      };
+    } catch (err: any) {
+      console.error('getVideoStatus error:', err.message);
+      return null;
+    }
   }
 
-  /**
-   * Re-assemble a video from existing scene URLs with new transitions / subtitle style.
-   * No script / audio / image re-generation — just FFmpeg re-render.
-   */
+
   async reAssembleVideo(
     videoId: string,
     scenes:  SceneWithMedia[],
