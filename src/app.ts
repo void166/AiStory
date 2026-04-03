@@ -63,7 +63,7 @@ app.get('/health', (_req: Request, res: Response) => {
 // ─── SPA fallback (production only) ──────────────────────────────────────────
 // Any non-API route returns index.html so React Router can handle it
 if (isProd) {
-  app.get('*', (_req: Request, res: Response) => {
+  app.get('/{*splat}', (_req: Request, res: Response) => {
     res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
   });
 } else {
