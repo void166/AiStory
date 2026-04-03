@@ -14,7 +14,14 @@ interface ScriptScene {
   narration: string;
   imagePrompt: string;
 }
-
+interface GeneratedThumbnail{
+  focus: string,
+  emotion: string,
+  visualHook: string,
+  textOverlay: string,
+  thumbnailUrl: string,
+  generatedAt: Date,
+}
 interface BackgroundImage {
   id: number;
   prompt: string;
@@ -23,6 +30,7 @@ interface BackgroundImage {
 interface ScriptResponse {
   title: string;
   duration: string;
+  thumbnailConcept: GeneratedThumbnail[];
   script: ScriptScene[];
   backgroundImages: BackgroundImage[];
 }

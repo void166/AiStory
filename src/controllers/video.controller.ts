@@ -36,7 +36,8 @@ class VideoController {
         userId,
         projectId,
         title,
-        ttsProvider
+        ttsProvider,
+        scriptProvider,
       } = req.body;
 
 
@@ -76,8 +77,9 @@ class VideoController {
         globalTransition: globalTransition || undefined, 
         sceneEffects: sceneEffects || undefined, 
         subtitleStyle: subtitleStyle || undefined, 
-        disableSubtitles: disableSubtitles ?? false, 
-        ttsProvider: ttsProvider || 'gemini'
+        disableSubtitles: disableSubtitles ?? false,
+        ttsProvider:    ttsProvider    || 'gemini',
+        scriptProvider: scriptProvider || 'anthropic',
       });
 
       console.log("\nVideo generation successful");
@@ -103,11 +105,11 @@ class VideoController {
           progress: 100,
           final_video_url: result.videoUrl || null,
           srtPath: result.srtPath || null,
-          thumbnail_url:        result.thumbnail?.thumbnailUrl   || null,
-          Tfocus:      result.thumbnail?.focus,
-          Temotion:    result.thumbnail?.emotion ,
-          ToverLay:    result.thumbnail?.textOverlay,
-          TvisualHook:result.thumbnail?.visualHook,
+          thumbnail_url: result.thumbnail?.thumbnailUrl   ?? null,
+          Tfocus:        result.thumbnail?.focus           ?? null,
+          Temotion:      result.thumbnail?.emotion         ?? null,
+          ToverLay:      result.thumbnail?.textOverlay     ?? null,
+          TvisualHook:   result.thumbnail?.visualHook      ?? null,
         });
 
         let createdScenes: any[] = [];
@@ -434,11 +436,11 @@ class VideoController {
         attributes: [
           "id", "title", "topic", "genre", "language", "imageStyle",
           "status", "duration", "final_video_url",
-          "thumbnail_url",        
-          "thumbnail_focus",      
-          "thumbnail_emotion",    
-          "thumbnail_overlay",    
-          "thumbnail_visual_hook",
+          "thumbnail_url",
+          "Tfocus",
+          "Temotion",
+          "ToverLay",
+          "TvisualHook",
           "bgmPath", "bgmVolume", "createdAt", "updatedAt",
         ],
         order:  [["createdAt", "DESC"]],

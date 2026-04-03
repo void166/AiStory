@@ -177,7 +177,7 @@ class VideoService {
             rawThumbnail,
             options.imageStyle || 'cinematic'
           );
-          console.log(`thumbnail generated: ${thumbnail.thumbnail_url}`);
+          console.log(`thumbnail generated: ${thumbnail.thumbnailUrl}`);
         }catch(err:any){
           console.warn(`Thumbnail generation failed: ${err.message}`);
         }

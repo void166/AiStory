@@ -20,10 +20,10 @@ interface VideoAttributes{
     thumbnail_url: string | null;
     fileSize?: number | null;
     errorMessage? : string | null;
-    Tfocus: string,
-    Temotion: string,
-    TvisualHook:string,
-    ToverLay: string
+    Tfocus?: string | null,
+    Temotion?: string | null,
+    TvisualHook?: string | null,
+    ToverLay?: string | null,
 }
 
 interface VideoCreationAttributes extends Optional<VideoAttributes, "id">{}
@@ -48,10 +48,10 @@ export class Video extends Model<VideoAttributes, VideoCreationAttributes> imple
   declare bgmPath: string | null;
   declare bgmVolume: number | null;
   declare srtPath: string | null;
-  declare Tfocus: string;
-  declare Temotion: string;
-  declare ToverLay: string
-  declare TvisualHook: string;
+  declare Tfocus: string | null;
+  declare Temotion: string | null;
+  declare ToverLay: string | null;
+  declare TvisualHook: string | null;
 }
 
 Video.init({
@@ -131,19 +131,19 @@ Video.init({
     },
     Tfocus:{
         type: DataTypes.STRING,
-        defaultValue: 'creepyComic'
+        allowNull: true,
     },
     Temotion:{
         type: DataTypes.STRING,
-        defaultValue: 'creepyComic'
+        allowNull: true,
     },
     ToverLay:{
         type: DataTypes.STRING,
-        defaultValue: 'creepyComic'
+        allowNull: true,
     },
     TvisualHook:{
         type: DataTypes.STRING,
-        defaultValue: 'creepyComic'
+        allowNull: true,
     },
     
 },{
