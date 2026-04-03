@@ -11,8 +11,14 @@ const sequelize = new Sequelize({
   password: DB_PASSWORD,
   host: DB_HOST,
   port: DB_PORT,
-  ssl: false,
   logging: false,
+  // Wrap SSL settings in dialectOptions
+  dialectOptions: {
+    ssl: isProd ? {
+      require: true,
+      rejectUnauthorized: false // Required for most managed providers like Render/Neon/AWS
+    } : false
+  }
 });
 
 export default sequelize;
