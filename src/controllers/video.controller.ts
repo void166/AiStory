@@ -363,12 +363,18 @@ class VideoController {
         title || "Video",
         {
           sceneEffects,
-          subtitleStyle: subtitleStyle || undefined,
+          subtitleStyle:    subtitleStyle    || undefined,
           disableSubtitles: disableSubtitles ?? false,
-          bgmPath: bgmPath || undefined,
-          bgmVolume: bgmVolume || "0.15",
-          genre: genre || undefined,
+          bgmPath:          bgmPath          || undefined,
+          bgmVolume:        bgmVolume        || "0.15",
+          genre:            genre            || undefined,
         }
+      );
+
+      // Persist the new video URL (may now be a Cloudinary URL)
+      await Video.update(
+        { final_video_url: result.videoUrl },
+        { where: { id: videoId } },
       );
 
       res.status(200).json({ success: true, data: result });

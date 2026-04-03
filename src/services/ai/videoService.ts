@@ -238,6 +238,10 @@ class VideoService {
         }
       });
 
+      // Upload final video to Cloudinary so the URL is persistent
+      const cloudVideoUrl = await this.uploadVideoToCloudinary(videoPath, videoId);
+      const videoUrl = cloudVideoUrl ?? `/output/${videoId}.mp4`;
+
       return {
         videoId,
         title:     script.title,
@@ -247,7 +251,7 @@ class VideoService {
         progress:  100,
         createdAt: new Date(),
         videoPath,
-        videoUrl:  `/output/${videoId}.mp4`,
+        videoUrl,
         srtPath,
         thumbnail,
       };
@@ -308,22 +312,31 @@ class VideoService {
     title:   string,
     options: VideoGenerationOptions = {},
   ): Promise<{ videoPath: string; videoUrl: string }> {
-    // Reuse existing SRT if present (only skip when explicitly disabled)
-    const srtPath = path.join(this.outputDir, `${videoId}.srt`);
-    const useSrt = !options.disableSubtitles && fs.existsSync(srtPath);
-
     console.log(`\n🔁 Re-assembling video: ${videoId}`);
-    console.log(`  Scenes: ${scenes.length}, SRT: ${useSrt ? 'yes' : 'no'}`);
 
-    const videoPath = await this.assembleVideo(
-      videoId,
-      scenes,
-      title,
-      useSrt ? srtPath : undefined,
-      options,
-    );
+    // ── SRT: use existing file OR regenerate from word-timing data ────────────
+    let srtToUse: string | undefined;
+    if (!options.disableSubtitles) {
+      const existingSrt = path.join(this.outputDir, `${videoId}.srt`);
+      if (fs.existsSync(existingSrt)) {
+        srtToUse = existingSrt;
+        console.log('  📝 Using existing SRT file');
+      } else {
+        // File missing (server restart / first deploy) — rebuild from words
+        console.log('  📝 SRT not found on disk — regenerating from scene word data');
+        srtToUse = await this.generateSRT(videoId, scenes);
+      }
+    }
 
-    return { videoPath, videoUrl: `/output/${videoId}.mp4` };
+    console.log(`  Scenes: ${scenes.length}, SRT: ${srtToUse ? 'yes' : 'no'}`);
+
+    const videoPath = await this.assembleVideo(videoId, scenes, title, srtToUse, options);
+
+    // Upload to Cloudinary so the URL survives server restarts / redeploys
+    const cloudUrl = await this.uploadVideoToCloudinary(videoPath, videoId);
+    const videoUrl = cloudUrl ?? `/output/${videoId}.mp4`;
+
+    return { videoPath, videoUrl };
   }
 
 
@@ -657,6 +670,48 @@ async reGenNarration(
   }
 
 
+
+  // ─── Upload final MP4 to Cloudinary ─────────────────────────────────────────
+  private async uploadVideoToCloudinary(
+    localPath: string,
+    videoId:   string,
+  ): Promise<string | null> {
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.CLOUDNAME;
+    const apiKey    = process.env.CLOUDINARY_API_KEY    || process.env.CLOUD_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET || process.env.CLOUD_API_SECRET;
+
+    if (!cloudName || !apiKey || !apiSecret) {
+      console.warn('⚠️  Cloudinary not configured — video kept at local path');
+      return null;
+    }
+
+    if (!fs.existsSync(localPath)) {
+      console.warn(`⚠️  Video file not found for Cloudinary upload: ${localPath}`);
+      return null;
+    }
+
+    const cloudinary = require('cloudinary').v2;
+    cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
+
+    try {
+      console.log(`☁️  Uploading video to Cloudinary (this may take a while)…`);
+      const result = await cloudinary.uploader.upload(localPath, {
+        resource_type: 'video',
+        folder:        'ai-generated-videos',
+        public_id:     videoId,
+        overwrite:     true,
+      });
+      console.log(`✅ Video uploaded: ${result.secure_url.substring(0, 70)}…`);
+
+      // Delete local copy to save disk space after a successful upload
+      try { await unlink(localPath); } catch { /* ignore */ }
+
+      return result.secure_url as string;
+    } catch (err: any) {
+      console.warn(`⚠️  Cloudinary video upload failed: ${err.message} — keeping local`);
+      return null;
+    }
+  }
 
   private async assembleVideo(
     videoId:  string,
