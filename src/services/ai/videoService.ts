@@ -314,18 +314,17 @@ class VideoService {
   ): Promise<{ videoPath: string; videoUrl: string }> {
     console.log(`\n🔁 Re-assembling video: ${videoId}`);
 
-    // ── SRT: use existing file OR regenerate from word-timing data ────────────
+    // ── SRT: always regenerate from current scene word-timing data ───────────
+    // This ensures new narration (after reGenNarration) is reflected in subtitles.
     let srtToUse: string | undefined;
     if (!options.disableSubtitles) {
+      console.log('  📝 Regenerating SRT from current scene word data...');
+      // Delete stale SRT first so generateSRT writes a fresh file
       const existingSrt = path.join(this.outputDir, `${videoId}.srt`);
       if (fs.existsSync(existingSrt)) {
-        srtToUse = existingSrt;
-        console.log('  📝 Using existing SRT file');
-      } else {
-        // File missing (server restart / first deploy) — rebuild from words
-        console.log('  📝 SRT not found on disk — regenerating from scene word data');
-        srtToUse = await this.generateSRT(videoId, scenes);
+        try { fs.unlinkSync(existingSrt); } catch { /* ignore */ }
       }
+      srtToUse = await this.generateSRT(videoId, scenes);
     }
 
     console.log(`  Scenes: ${scenes.length}, SRT: ${srtToUse ? 'yes' : 'no'}`);
@@ -1041,7 +1040,7 @@ console.log(`  🎯 Output duration capped at: ${totalDuration.toFixed(2)}s`);
         .outputOptions([
           "-t", totalDuration.toFixed(3),
           "-c:v",    "libx264",
-          "-preset", "medium",
+          "-preset", "veryfast",
           "-crf",    "23",
           "-pix_fmt","yuv420p",
           "-c:a",    "aac",

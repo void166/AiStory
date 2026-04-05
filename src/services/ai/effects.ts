@@ -54,19 +54,19 @@ export function getAtmosphereByGenre(genre = 'cinematic'): string {
     scary:
       `eq=contrast=1.25:brightness=-0.08:saturation=0.6,` +
       `curves=b='0/0.05 0.5/0.52 1/1':g='0/0 0.5/0.45 1/0.9',` +
-      `vignette=angle=PI/3,noise=alls=15:allf=t+u`,
+      `vignette=angle=PI/3`,
 
     education:
       `eq=contrast=1.05:brightness=0.02:saturation=1.1,` +
-      `vignette=angle=PI/6,noise=alls=3:allf=t+u`,
+      `vignette=angle=PI/6`,
 
     vintage:
       `eq=contrast=1.1:brightness=-0.05:saturation=0.8,` +
-      `vignette=angle=PI/4,noise=alls=12:allf=t+u`,
+      `vignette=angle=PI/4`,
 
     cinematic:
       `eq=contrast=1.05:brightness=-0.03:saturation=0.9,` +
-      `vignette=angle=PI/4,noise=alls=7:allf=t+u`,
+      `vignette=angle=PI/4`,
   };
 
   return presets[g] ?? presets.cinematic;
@@ -111,13 +111,15 @@ export function buildMotionFilter(
 ): string {
   const frames = Math.max(Math.round(durationSecs * FPS), 1);
 
+  // Zoom values capped at 1.08x to stay within the 1.1x prescale,
+  // keeping Railway container memory usage manageable.
   const motions: Record<MotionPreset, { z: string; x: string; y: string }> = {
-    'push-in':    { z: `1.0+0.15*(on/${frames})`,                  x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
-    'zoom-out':   { z: `max(1.15-0.15*(on/${frames}),1.0)`,        x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
-    'drift-left': { z: `1.1`,                                       x: `(iw/2-(iw/zoom/2))+on/${frames}*80`,  y: `ih/2-(ih/zoom/2)` },
-    'drift-right':{ z: `1.1`,                                       x: `(iw/2-(iw/zoom/2))-on/${frames}*80`,  y: `ih/2-(ih/zoom/2)` },
-    'float':      { z: `1.0+0.08*(on/${frames})`,                   x: `(iw/2-(iw/zoom/2))+on/${frames}*30`,  y: `(ih/2-(ih/zoom/2))+on/${frames}*20` },
-    'hook-reveal':{ z: `if(lt(on,15),1.3-on*0.02,1.0+on*0.0008)`, x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
+    'push-in':    { z: `1.0+0.08*(on/${frames})`,                  x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
+    'zoom-out':   { z: `max(1.08-0.08*(on/${frames}),1.0)`,        x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
+    'drift-left': { z: `1.05`,                                      x: `(iw/2-(iw/zoom/2))+on/${frames}*60`,  y: `ih/2-(ih/zoom/2)` },
+    'drift-right':{ z: `1.05`,                                      x: `(iw/2-(iw/zoom/2))-on/${frames}*60`,  y: `ih/2-(ih/zoom/2)` },
+    'float':      { z: `1.0+0.05*(on/${frames})`,                   x: `(iw/2-(iw/zoom/2))+on/${frames}*20`,  y: `(ih/2-(ih/zoom/2))+on/${frames}*15` },
+    'hook-reveal':{ z: `if(lt(on,15),1.08-on*0.005,1.0+on*0.0004)`, x: `iw/2-(iw/zoom/2)`,                  y: `ih/2-(ih/zoom/2)` },
     'static':     { z: `1.0`,                                       x: `iw/2-(iw/zoom/2)`,                    y: `ih/2-(ih/zoom/2)` },
   };
 
@@ -141,8 +143,10 @@ export function buildSceneFilter(
   genre = 'cinematic',
 ): string {
 
-  const oversizeW = Math.round(OUT_W * 1.5);
-  const oversizeH = Math.round(OUT_H * 1.5);
+  // 1.1x oversize gives enough room for the max 1.08x zoom
+  // while keeping decoded frame size small enough for Railway containers.
+  const oversizeW = Math.round(OUT_W * 1.1);  // 1188
+  const oversizeH = Math.round(OUT_H * 1.1);  // 2112
 
   const prescale =
     `scale=${oversizeW}:${oversizeH}:force_original_aspect_ratio=increase,` +
