@@ -314,17 +314,20 @@ class VideoService {
   ): Promise<{ videoPath: string; videoUrl: string }> {
     console.log(`\n🔁 Re-assembling video: ${videoId}`);
 
-    // ── SRT: always regenerate from current scene word-timing data ───────────
-    // This ensures new narration (after reGenNarration) is reflected in subtitles.
+    // ── SRT: regenerate from current narration text + audioDuration ──────────
+    // We intentionally ignore scene.words here because they may be stale
+    // (generated for a previous narration). Using narration+audioDuration always
+    // reflects the current text, even for videos saved before the words-update fix.
     let srtToUse: string | undefined;
     if (!options.disableSubtitles) {
-      console.log('  📝 Regenerating SRT from current scene word data...');
-      // Delete stale SRT first so generateSRT writes a fresh file
+      console.log('  📝 Regenerating SRT from narration text...');
       const existingSrt = path.join(this.outputDir, `${videoId}.srt`);
       if (fs.existsSync(existingSrt)) {
         try { fs.unlinkSync(existingSrt); } catch { /* ignore */ }
       }
-      srtToUse = await this.generateSRT(videoId, scenes);
+      // Strip words so generateSRT falls back to narrationToSRTBlock per scene
+      const scenesForSRT = scenes.map(s => ({ ...s, words: [] as any[] }));
+      srtToUse = await this.generateSRT(videoId, scenesForSRT);
     }
 
     console.log(`  Scenes: ${scenes.length}, SRT: ${srtToUse ? 'yes' : 'no'}`);
@@ -375,12 +378,14 @@ async reGenNarration(
   const filename = `audio_${this.generateVideoId()}_scene${scene.sceneIndex}_regen`;
   const newAudioUrl = await audioService.uploadToCloudinary(audioResult.audioBuffer, filename);
 
-  scene.narration    = newText;
-  scene.audioUrl     = newAudioUrl;
+  scene.narration     = newText;
+  scene.audioUrl      = newAudioUrl;
   scene.audioDuration = audioResult.duration ?? scene.audioDuration;
+  // Save new word timings so SRT regeneration uses the updated narration
+  scene.words = audioResult.words ? JSON.stringify(audioResult.words) : null;
   await scene.save();
 
-  console.log(`  ✓ Narration + audio updated for scene ${id}`);
+  console.log(`  ✓ Narration + audio + word timings updated for scene ${id}`);
   return { audioUrl: newAudioUrl, duration: audioResult.duration ?? 0 };
 }
 
@@ -542,17 +547,35 @@ async reGenNarration(
     return srtPath;
   }
   
-  // Шинэ helper — нэг бүтэн narration-г нэг SRT блок болгоно
+  // Narration-г жижиг chunk-уудад хуваагаад duration-г тэгш хуваарилна.
+  // Нэг chunk = 4 үг (subtitle стандарт), харагдах хугацаа = duration / chunkCount.
   private narrationToSRTBlock(
     narration: string,
     startOffset: number,
     duration: number,
   ): string {
-    const start = this.secondsToSRTTime(startOffset);
-    const end   = this.secondsToSRTTime(startOffset + duration);
-    // Урт текстийг 42 тэмдэгтээр зүсэх (subtitle стандарт)
-    const lines = this.wrapText(narration, 42);
-    return `1\n${start} --> ${end}\n${lines}`;
+    const WORDS_PER_CHUNK = 1;
+    const words = narration.trim().split(/\s+/).filter(Boolean);
+
+    if (words.length === 0 || duration <= 0) return '';
+
+    // 4 үгийн chunk-уудад хуваана
+    const chunks: string[] = [];
+    for (let i = 0; i < words.length; i += WORDS_PER_CHUNK) {
+      chunks.push(words.slice(i, i + WORDS_PER_CHUNK).join(' '));
+    }
+
+    // Нэг chunk-д ногдох хугацаа
+    const chunkDur = duration / chunks.length;
+
+    const blocks: string[] = [];
+    chunks.forEach((chunk, idx) => {
+      const s = this.secondsToSRTTime(startOffset + idx * chunkDur);
+      const e = this.secondsToSRTTime(startOffset + (idx + 1) * chunkDur);
+      blocks.push(`1\n${s} --> ${e}\n${chunk}`);
+    });
+
+    return blocks.join('\n\n');
   }
   
   private secondsToSRTTime(seconds: number): string {

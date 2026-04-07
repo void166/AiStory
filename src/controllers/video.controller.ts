@@ -148,6 +148,9 @@ class VideoController {
           success: true,
           data: {
             ...result,
+            // Override the service's internal vid_xxx ID with the real DB UUID
+            // so the frontend always uses the UUID for reassemble / status calls.
+            videoId: video.id,
             scenes: scenesWithIds,
             dbId: video.id,
           },
