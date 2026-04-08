@@ -393,36 +393,36 @@ class VideoController {
    * POST /api/video/:videoId/regen-text
    * AI rewrites narration or imagePrompt for one scene
    */
-  // async regenSceneText(req: Request, res: Response): Promise<void> {
-  //   try {
-  //     const { what, scene, time, genre, narration, imagePrompt } = req.body;
-  //     if (!what || !['narration', 'imagePrompt', 'both'].includes(what)) {
-  //       res.status(400).json({ success: false, error: 'what must be: narration | imagePrompt | both' });
-  //       return;
-  //     }
-  //     // Build a minimal script structure to feed regenerateScene
-  //     const fakeScript = {
-  //       title: '',
-  //       duration: '',
-  //       backgroundImages: [] as { id: number; prompt: string }[],
-  //       script: [{
-  //         time:        time        || '0:00-0:05',
-  //         scene:       scene       || '',
-  //         visual:      imagePrompt || '',
-  //         narration:   narration   || '',
-  //         imagePrompt: imagePrompt || '',
-  //       }],
-  //     };
-  //     const regenResult = await scriptService.regenerateScene(fakeScript as any, 0);
-  //     const data: Record<string, string> = {};
-  //     if (what === 'narration' || what === 'both') data.narration = regenResult.narration;
-  //     if (what === 'imagePrompt' || what === 'both') data.imagePrompt = regenResult.imagePrompt ?? regenResult.visual;
-  //     res.status(200).json({ success: true, data });
-  //   } catch (error: any) {
-  //     console.error('\nregen-text error:', error);
-  //     res.status(500).json({ success: false, error: error.message || 'Text regen failed' });
-  //   }
-  // }
+   async regenSceneText(req: Request, res: Response): Promise<void> {
+  try {
+     const { what, scene, time, genre, narration, imagePrompt } = req.body;
+       if (!what || !['narration', 'imagePrompt', 'both'].includes(what)) {
+         res.status(400).json({ success: false, error: 'what must be: narration | imagePrompt | both' });
+         return;
+       }
+       // Build a minimal script structure to feed regenerateScene
+       const fakeScript = {
+         title: '',
+         duration: '',
+         backgroundImages: [] as { id: number; prompt: string }[],
+         script: [{
+           time:        time        || '0:00-0:05',
+           scene:       scene       || '',
+           visual:      imagePrompt || '',
+           narration:   narration   || '',
+           imagePrompt: imagePrompt || '',
+         }],
+       };
+       const regenResult = await scriptService.regenerateScene(fakeScript as any, 0);
+       const data: Record<string, string> = {};
+       if (what === 'narration' || what === 'both') data.narration = regenResult.narration;
+       if (what === 'imagePrompt' || what === 'both') data.imagePrompt = regenResult.imagePrompt ?? regenResult.visual;
+       res.status(200).json({ success: true, data });
+     } catch (error: any) {
+       console.error('\nregen-text error:', error);
+       res.status(500).json({ success: false, error: error.message || 'Text regen failed' });
+     }
+   }
 
   /**
    * GET /api/video

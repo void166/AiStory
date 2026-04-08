@@ -49,7 +49,7 @@ router.post('/:videoId/reassemble',authMiddleware, videoController.reAssembleVid
  * @desc    AI rewrite narration or imagePrompt for one scene
  * @body    { what: 'narration' | 'imagePrompt' | 'both', scene, time, narration, imagePrompt }
  */
-// router.post('/:videoId/regen-text',authMiddleware, videoController.regenSceneText);
+router.post('/:videoId/regen-text',authMiddleware, videoController.regenSceneText);
 
 router.patch('/scene/:id/image', authMiddleware, videoController.reGenImage);
 router.patch('/scene/:id/narration', authMiddleware, videoController.reGenNarration);
