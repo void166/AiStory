@@ -46,7 +46,7 @@ if (isProd) {
   app.use(express.static(path.join(process.cwd(), 'public')));
 }
 
-// ─── API Routes ───────────────────────────────────────────────────────────────
+
 app.use('/api/auth',       authRouter);
 app.use('/api',            projectRouter);
 app.use('/api',            scriptRoutes);
@@ -55,13 +55,13 @@ app.use('/api/ai/script',  scriptRoutes);
 app.use('/api/audio',      audioRoute);
 app.use('/api/video',      videoRoute);
 
-// ─── Health check ─────────────────────────────────────────────────────────────
+
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', env: process.env.NODE_ENV ?? 'development' });
 });
 
-// ─── SPA fallback (production only) ──────────────────────────────────────────
-// Any non-API route returns index.html so React Router can handle it
+
+
 if (isProd) {
   app.get('/{*splat}', (_req: Request, res: Response) => {
     res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
@@ -72,7 +72,7 @@ if (isProd) {
   });
 }
 
-// ─── DB connection + start ────────────────────────────────────────────────────
+
 (async () => {
   try {
     associations();
