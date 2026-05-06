@@ -1,6 +1,8 @@
 import client from 'magic-hour';
 import { GoogleGenAI } from '@google/genai';
 import { config } from '../../config';
+import fs from 'fs';
+import path from 'path';
 
 const {MAGICHOUR_API,GEMINI_API_KEY } = config;
 
@@ -201,7 +203,7 @@ class ImageService {
       
         const thumbnailUrl = await this.generateSingle(
           dummyScene,
-          imagePrompt,   // customPrompt — overrides buildPrompt()
+          imagePrompt, 
         );
       
         return {
@@ -269,7 +271,8 @@ class ImageService {
   async generateSingle(
     scene: ScriptScene,
     customPrompt?: string,
-    customStyle?: { prompt?: string; type?: string; intensity?: number }
+    customStyle?: { prompt?: string; type?: string; intensity?: number },
+    onCloudinaryDone?: (cloudUrl: string) => void,
   ): Promise<string> {
     const maxRetries = 3;
     let lastError: Error | null = null;
@@ -313,25 +316,51 @@ class ImageService {
           throw new Error('Gemini returned no image data.');
         }
 
-        console.log(`✅ Got base64 image (${mimeType}), uploading to Cloudinary...`);
+        console.log(`✅ Got base64 image (${mimeType}), saving locally...`);
 
-        // ── Upload base64 → Cloudinary ────────────────────────────────────
-        const cloudUrl = await this.uploadBase64ToCloudinary(base64Image, mimeType);
-        console.log(`☁️  Cloudinary URL: ${cloudUrl.substring(0, 80)}...`);
-        return cloudUrl;
+        // ── Save locally first (fast, no timeout risk) ────────────────────
+        const localPath = await this.saveBase64Locally(base64Image, mimeType);
+        console.log(`💾 Saved locally: ${path.basename(localPath)}`);
+
+        // ── Upload to Cloudinary in background (non-blocking) ─────────────
+        this.uploadBase64ToCloudinary(base64Image, mimeType).then(cloudUrl => {
+          console.log(`☁️  Cloudinary async upload done: ${cloudUrl.substring(0, 60)}...`);
+          onCloudinaryDone?.(cloudUrl);   // ← notify caller so it can update DB
+        }).catch(err => {
+          console.warn(`⚠️  Cloudinary async upload failed (local path still usable): ${err.message}`);
+        });
+
+        return localPath;
 
       } catch (error: any) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        console.error(`❌ Attempt ${attempt} failed:`, lastError.message);
+        // Cloudinary / Gemini SDKs sometimes throw plain objects, not Error instances.
+        // String(plainObject) === "[object Object]", which loses the real message.
+        const realMsg =
+          error?.message
+          ?? error?.error?.message
+          ?? error?.response?.data?.error?.message
+          ?? (typeof error === 'object' ? JSON.stringify(error) : String(error));
+        lastError = error instanceof Error ? error : new Error(realMsg);
+        console.error(`❌ Attempt ${attempt} failed:`, realMsg);
+        if (error?.http_code) console.error(`   http_code: ${error.http_code}`);
+        if (error?.name)      console.error(`   name: ${error.name}`);
 
-        if (error?.status === 429 && attempt < maxRetries) {
-          const wait = Math.pow(2, attempt) * 1000;
-          console.log(`⏳ Rate limited. Waiting ${wait}ms...`);
+        const isRetryable =
+          error?.status === 429 ||
+          error?.http_code === 429 ||
+          error?.http_code === 499 ||   // Cloudinary timeout
+          error?.status === 503 ||      // Gemini overload
+          realMsg.includes('timeout') ||
+          realMsg.includes('UNAVAILABLE');
+
+        if (isRetryable && attempt < maxRetries) {
+          const wait = Math.pow(2, attempt) * 2000;
+          console.log(`⏳ Retrying in ${wait / 1000}s...`);
           await this.delay(wait);
           continue;
         }
 
-        if (attempt < maxRetries) await this.delay(1000);
+        if (attempt < maxRetries) await this.delay(1500);
       }
     }
 
@@ -549,25 +578,58 @@ MANDATORY TECHNICAL REQUIREMENTS (follow all — non-negotiable):
     return results;
   }
 
-  private async uploadBase64ToCloudinary(base64: string, mimeType: string): Promise<string> {
+  private async saveBase64Locally(base64: string, mimeType: string): Promise<string> {
+    const ext = mimeType.includes('jpeg') ? 'jpg' : 'png';
+    const imgDir = path.join(process.cwd(), 'output', 'images');
+    fs.mkdirSync(imgDir, { recursive: true });
+    const filename = `img_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+    const filePath = path.join(imgDir, filename);
+    fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+    return filePath;
+  }
+
+  private async uploadBase64ToCloudinary(base64: string, _mimeType: string): Promise<string> {
     const cloudinary = require('cloudinary').v2;
 
-    if (!cloudinary.config().cloud_name) {
-      cloudinary.config({
-        cloud_name: config.CLOUDNAME,
-        api_key: config.CLOUD_API_KEY,
-        api_secret: config.CLOUD_API_SECRET,
-      });
-    }
-
-    const dataUri = `data:${mimeType};base64,${base64}`;
-
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: 'ai-generated-images',
-      resource_type: 'image',
+    // Always override — system env CLOUDINARY_CLOUD_NAME can shadow .env values
+    cloudinary.config({
+      cloud_name: config.CLOUDNAME,
+      api_key:    config.CLOUD_API_KEY,
+      api_secret: config.CLOUD_API_SECRET,
     });
 
-    return result.secure_url;
+    if (!config.CLOUDNAME || !config.CLOUD_API_KEY || !config.CLOUD_API_SECRET) {
+      throw new Error(
+        `Cloudinary credentials missing in config: CLOUDNAME=${!!config.CLOUDNAME}`
+      );
+    }
+
+    const buffer = Buffer.from(base64, 'base64');
+    console.log(`  → Cloudinary upload (${(buffer.length / 1024).toFixed(1)} KB)...`);
+
+    return new Promise<string>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'ai-generated-images',
+          resource_type: 'image',
+          timeout: 60000,
+        },
+        (error: any, result: any) => {
+          if (error) {
+            // Cloudinary errors are { message, http_code, name }
+            const msg = error?.message
+              ?? error?.error?.message
+              ?? JSON.stringify(error);
+            return reject(new Error(`Cloudinary: ${msg} (http_code=${error?.http_code ?? 'n/a'})`));
+          }
+          if (!result?.secure_url) {
+            return reject(new Error('Cloudinary returned no secure_url'));
+          }
+          resolve(result.secure_url);
+        }
+      );
+      stream.end(buffer);
+    });
   }
 
   private delay(ms: number): Promise<void> {

@@ -12,6 +12,12 @@ const router = Router();
 router.post('/generate',authMiddleware ,videoController.generateVideos);
 
 /**
+ * @route   GET /api/video/progress/:jobId
+ * @desc    SSE stream for real-time generation progress (no auth — jobId is the secret)
+ */
+router.get('/progress/:jobId', videoController.getProgressStream.bind(videoController));
+
+/**
  * @route   GET /api/video
  * @desc    Get all videos for the authenticated user (paginated)
  * @query   page=1&limit=20

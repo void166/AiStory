@@ -4,6 +4,7 @@
   "description": "",
   "main": "dist/app.js",
   "scripts": {
+    "dev": "nodemon",
     "start": "nodemon",
     "build": "tsc",
     "start:prod": "node dist/app.js"

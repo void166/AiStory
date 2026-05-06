@@ -21,6 +21,7 @@ import {
   buildSceneFilter,
   buildSubtitleFilter,
 } from "./effects";
+import type { ProgressEvent } from "../progressEmitter";
 
 
 
@@ -58,10 +59,11 @@ export interface VideoGenerationOptions {
   sceneEffects?: Partial<SceneEffectConfig>[];
   subtitleStyle?:    SubtitleStyle;
   disableSubtitles?: boolean;
-  bgmPath?: string;       
+  bgmPath?: string;
   bgmVolume?: string;
   scriptProvider? : 'anthropic' | 'groq';
-  ttsProvider?: 'elevenlabs' | 'gemini' | 'chimege';      
+  ttsProvider?: 'elevenlabs' | 'gemini' | 'chimege';
+  onProgress?: (event: ProgressEvent) => void;
 }
 
 interface SceneWithMedia {
@@ -148,12 +150,14 @@ class VideoService {
       throw new Error(`Invalid bgmPath "${options.bgmPath}". Choose from: ${Object.keys(this.BGM_LIBRARY).join(", ")}`);
     }
 
+    const emit = options.onProgress ?? (() => {});
+
     try {
       console.log(`Starting video gen: ${videoId}`);
       console.log(`Topic: ${topic}`);
       console.log(`Options:`, options);
 
-
+      emit({ step: 'writing_script', message: 'Script бичиж байна...' });
       console.log("Script gen started...");
       const script = await scriptService.generate(
         topic,
@@ -166,11 +170,13 @@ class VideoService {
         },
       );
       console.log(`Script generated: ${script.script.length} scenes`);
+      emit({ step: 'writing_script', message: `Script бэлэн: ${script.script.length} scene`, percent: 15 });
 
       let thumbnail: GeneratedThumbnail | undefined;
 
       const rawThumbnail = script.thumbnailConcept?.[0];
       if(rawThumbnail){
+        emit({ step: 'writing_script', message: 'Thumbnail зураг үүсгэж байна...' });
         console.log("generating thumbnail");
         try{
           thumbnail = await imageService.generateThumbnail(
@@ -183,6 +189,7 @@ class VideoService {
         }
       }
 
+      // Start images in parallel while audio is generated sequentially
       const imagePromises = script.script.map((scene) =>
         imageService.generateSingle(
           { time: scene.time, scene: scene.scene, description: scene.imagePrompt || scene.visual },
@@ -190,20 +197,29 @@ class VideoService {
         ),
       );
 
-
+      const totalScenes = script.script.length;
       const processedScenes: SceneWithMedia[] = [];
-      for (let i = 0; i < script.script.length; i++) {
+      for (let i = 0; i < totalScenes; i++) {
         const scene = script.script[i];
-        console.log(`[${i + 1}/${script.script.length}] Processing scene: ${scene.time}`);
+        console.log(`[${i + 1}/${totalScenes}] Processing scene: ${scene.time}`);
+        emit({
+          step: 'generating_audio',
+          message: `Дуу хоолой: ${i + 1}/${totalScenes} scene`,
+          sceneIndex: i,
+          totalScenes,
+          percent: 20 + Math.round((i / totalScenes) * 30),
+        });
         const audioResults = await this.generateAudioForScenes([scene], options.voiceId, options.ttsProvider ?? 'gemini');
         processedScenes.push({ ...audioResults[0] } as SceneWithMedia);
       }
 
-
+      emit({ step: 'generating_images', message: 'Processing Images...', percent: 50 });
       const imageResults = await Promise.allSettled(imagePromises);
+      let imageSuccessCount = 0;
       imageResults.forEach((result, index) => {
         if (result.status === "fulfilled") {
           processedScenes[index].imageUrl = result.value ?? undefined;
+          imageSuccessCount++;
         } else {
           console.warn(
             `  ⚠️  Image failed for scene ${index + 1}:`,
@@ -211,7 +227,13 @@ class VideoService {
           );
         }
       });
+      emit({
+        step: 'generating_images',
+        message: `Images Ready!: ${imageSuccessCount}/${totalScenes}`,
+        percent: 65,
+      });
 
+      emit({ step: 'rendering_video', message: 'Creating Substitles...', percent: 68 });
       const srtPath = options.disableSubtitles
         ? undefined
         : await this.generateSRT(videoId, processedScenes);
@@ -220,12 +242,13 @@ class VideoService {
         `All scenes processed: ${processedScenes.filter((s) => s.imageUrl).length}/${script.script.length} with images`,
       );
 
+      emit({ step: 'rendering_video', message: 'Assembling Video...', percent: 70 });
       const videoPath = await this.assembleVideo(
         videoId,
         processedScenes,
         script.title,
         srtPath,
-        options,
+        { ...options, onProgress: emit },
       );
 
       // Attach transition and motionEffect to each scene so they get saved to DB
@@ -238,9 +261,12 @@ class VideoService {
         }
       });
 
-      // Upload final video to Cloudinary so the URL is persistent
+      emit({ step: 'rendering_video', message: 'Into the cloudinary...', percent: 90 });
+
       const cloudVideoUrl = await this.uploadVideoToCloudinary(videoPath, videoId);
       const videoUrl = cloudVideoUrl ?? `/output/${videoId}.mp4`;
+
+      emit({ step: 'complete', message: 'Video created Succesfully!', percent: 100 });
 
       return {
         videoId,
@@ -256,6 +282,7 @@ class VideoService {
         thumbnail,
       };
     } catch (err: any) {
+      emit({ step: 'error', message: err.message || 'Видео үүсгэхэд алдаа гарлаа' });
       console.error(`Video generation failed: ${err.message}`);
       throw new Error(`Video generation failed: ${err.message}`);
     }
@@ -354,8 +381,19 @@ async reGenImage(
   const newImageUrl = await imageService.generateSingle(
     { time: scene.time, scene: scene.scene, description: imagePrompt },
     imagePrompt,
+    undefined,
+    // When Cloudinary upload finishes in the background, replace local path with CDN URL
+    async (cloudUrl) => {
+      try {
+        await Scene.update({ imageUrl: cloudUrl }, { where: { id } });
+        console.log(`☁️  Scene ${id} imageUrl updated to Cloudinary URL`);
+      } catch (err: any) {
+        console.warn(`⚠️  Could not update scene ${id} with Cloudinary URL: ${err.message}`);
+      }
+    },
   );
 
+  // Save local path immediately so the response is fast
   scene.imageUrl = newImageUrl;
   await scene.save();
 
@@ -1072,7 +1110,16 @@ console.log(`  🎯 Output duration capped at: ${totalDuration.toFixed(2)}s`);
         ])
         .on("start",    (cmd) => console.log("FFmpeg:", cmd))
         .on("stderr",   (line) => console.log("  ffmpeg stderr:", line))
-        .on("progress", (p)   => { if (p.percent) console.log(`  ${Math.round(p.percent)}%`); })
+        .on("progress", (p) => {
+          if (p.percent) {
+            console.log(`  ${Math.round(p.percent)}%`);
+            options.onProgress?.({
+              step: 'rendering_video',
+              message: `FFmpeg: ${Math.round(p.percent)}%`,
+              percent: 70 + Math.round(p.percent * 0.2),
+            });
+          }
+        })
         .on("end",      ()    => {
           console.log("  ✓ Done");
           if (fcScriptPath) try { fs.unlinkSync(fcScriptPath); } catch {}

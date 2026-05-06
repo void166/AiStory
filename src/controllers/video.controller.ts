@@ -10,6 +10,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import fs from "fs";
 import path from "path";
 import { Op } from "sequelize";
+import { progressEmitter, emitProgress } from "../services/progressEmitter";
 
 
 function getStringParam(param: string | string[] | undefined): string | null {
@@ -38,6 +39,7 @@ class VideoController {
         title,
         ttsProvider,
         scriptProvider,
+        jobId,
       } = req.body;
 
 
@@ -74,12 +76,13 @@ class VideoController {
         voiceId: voiceId || undefined,
         bgmPath: bgmPath || "history1",
         bgmVolume: bgmVolume || "0.15",
-        globalTransition: globalTransition || undefined, 
-        sceneEffects: sceneEffects || undefined, 
-        subtitleStyle: subtitleStyle || undefined, 
+        globalTransition: globalTransition || undefined,
+        sceneEffects: sceneEffects || undefined,
+        subtitleStyle: subtitleStyle || undefined,
         disableSubtitles: disableSubtitles ?? false,
         ttsProvider:    ttsProvider    || 'gemini',
         scriptProvider: scriptProvider || 'anthropic',
+        onProgress: jobId ? (event) => emitProgress(jobId, event) : undefined,
       });
 
       console.log("\nVideo generation successful");
@@ -523,6 +526,32 @@ class VideoController {
       console.error("\n❌ deleteVideo error:", err);
       res.status(500).json({ success: false, error: err.message || "Failed to delete video" });
     }
+  }
+
+  getProgressStream(req: Request, res: Response): void {
+    const { jobId } = req.params;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const send = (data: object) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const handler = (data: object) => send(data);
+    progressEmitter.on(`job:${jobId}`, handler);
+
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 15000);
+
+    req.on('close', () => {
+      progressEmitter.off(`job:${jobId}`, handler);
+      clearInterval(heartbeat);
+    });
   }
 
   async testGeneration(req: Request, res: Response): Promise<void> {

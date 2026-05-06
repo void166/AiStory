@@ -502,11 +502,14 @@ class AudioService {
   async uploadToCloudinary(audioBuffer: Buffer, filename: string): Promise<string> {
     const cloudinary = require('cloudinary').v2;
 
+    // Always override — system env CLOUDINARY_CLOUD_NAME can shadow .env values
     cloudinary.config({
-      cloud_name: CLOUDNAME,
-      api_key: CLOUD_API_KEY,
-      api_secret: CLOUD_API_SECRET
+      cloud_name: CLOUDNAME   || '',
+      api_key:    CLOUD_API_KEY    || '',
+      api_secret: CLOUD_API_SECRET || '',
     });
+
+    if (!CLOUDNAME) throw new Error(`Invalid cloud_name: CLOUDNAME env var is empty`);
 
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
