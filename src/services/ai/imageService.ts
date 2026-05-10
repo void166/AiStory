@@ -216,6 +216,69 @@ class ImageService {
         };
       
     }
+
+  /**
+   * Same as generateThumbnail but resolves to the Cloudinary CDN URL.
+   * Falls back to local path if Cloudinary is slow/unreachable so the
+   * caller never hangs forever.
+   */
+  async generateThumbnailCloudUrl(
+    thumbnail: ThumbnailConcept,
+    style: string = 'cinematic',
+  ): Promise<string> {
+    const stylePrompt = this.THUMBNAIL_STYLE[style] ?? this.THUMBNAIL_STYLE['cinematic'];
+    const imagePrompt = `
+Thumbnail concept:
+Focus:      ${thumbnail.focus}
+Emotion:    ${thumbnail.emotion}
+Visual hook: ${thumbnail.visualHook}
+
+Visual style: ${stylePrompt}
+
+COMPOSITION RULES (mandatory):
+- Portrait vertical format, 1080x1920, mobile-first
+- Main subject centered horizontally and vertically
+- Leave at least 10% safe margin on left and right edges
+- Nothing important cropped at the edges
+- Bold, high-contrast visuals engineered for instant attention in a feed
+- No text, watermarks, or UI overlays on the image
+    `.trim();
+
+    const dummyScene: ScriptScene = {
+      time: '0:00',
+      scene: thumbnail.focus,
+      description: thumbnail.visualHook,
+    };
+
+    return new Promise<string>((resolve, reject) => {
+      let resolved = false;
+      const finish = (url: string) => {
+        if (!resolved) { resolved = true; resolve(url); }
+      };
+
+      // Hard timeout: fall back to local path after 30s
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          console.warn('⚠️  Thumbnail Cloudinary upload timed out — keeping local fallback');
+        }
+      }, 30000);
+
+      this.generateSingle(
+        dummyScene,
+        imagePrompt,
+        undefined,
+        (cloudUrl) => { clearTimeout(timeout); finish(cloudUrl); },
+      ).then((localPath) => {
+        // If cloud upload didn't fire the callback within the window,
+        // resolve with local path so caller doesn't hang
+        setTimeout(() => { clearTimeout(timeout); finish(localPath); }, 30000);
+      }).catch((err) => {
+        clearTimeout(timeout);
+        if (!resolved) { resolved = true; reject(err); }
+      });
+    });
+  }
+
   async generateFromScript(
     scenes: ScriptScene[],
     backgroundImages: BackgroundImage[]

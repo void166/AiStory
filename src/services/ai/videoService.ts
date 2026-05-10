@@ -172,22 +172,20 @@ class VideoService {
       console.log(`Script generated: ${script.script.length} scenes`);
       emit({ step: 'writing_script', message: `Script бэлэн: ${script.script.length} scene`, percent: 15 });
 
-      let thumbnail: GeneratedThumbnail | undefined;
-
+      // Thumbnail generation is deferred — runs AFTER the video is saved
+      // (see videoController.generateVideos). We still surface the concept so
+      // the controller knows what prompt to use for the background job.
       const rawThumbnail = script.thumbnailConcept?.[0];
-      if(rawThumbnail){
-        emit({ step: 'writing_script', message: 'Thumbnail зураг үүсгэж байна...' });
-        console.log("generating thumbnail");
-        try{
-          thumbnail = await imageService.generateThumbnail(
-            rawThumbnail,
-            options.imageStyle || 'cinematic'
-          );
-          console.log(`thumbnail generated: ${thumbnail.thumbnailUrl}`);
-        }catch(err:any){
-          console.warn(`Thumbnail generation failed: ${err.message}`);
-        }
-      }
+      const thumbnail: GeneratedThumbnail | undefined = rawThumbnail
+        ? {
+            focus:       rawThumbnail.focus,
+            emotion:     rawThumbnail.emotion,
+            visualHook:  rawThumbnail.visualHook,
+            textOverlay: rawThumbnail.textOverlay,
+            thumbnailUrl: '',          // filled in later by background job
+            generatedAt: new Date(),
+          }
+        : undefined;
 
       // Start images in parallel while audio is generated sequentially
       const imagePromises = script.script.map((scene) =>
@@ -338,6 +336,7 @@ class VideoService {
     scenes:  SceneWithMedia[],
     title:   string,
     options: VideoGenerationOptions = {},
+    onCloudinaryDone?: (cloudUrl: string) => void,
   ): Promise<{ videoPath: string; videoUrl: string }> {
     console.log(`\n🔁 Re-assembling video: ${videoId}`);
 
@@ -361,11 +360,54 @@ class VideoService {
 
     const videoPath = await this.assembleVideo(videoId, scenes, title, srtToUse, options);
 
-    // Upload to Cloudinary so the URL survives server restarts / redeploys
-    const cloudUrl = await this.uploadVideoToCloudinary(videoPath, videoId);
-    const videoUrl = cloudUrl ?? `/output/${videoId}.mp4`;
+    // Return the local URL immediately so the user sees the video right away.
+    // Cloudinary upload runs in the background; when finished we invoke the
+    // callback so the caller can swap the DB URL to the CDN one.
+    const localUrl = `/output/${videoId}.mp4`;
 
-    return { videoPath, videoUrl };
+    this.uploadVideoToCloudinary(videoPath, videoId)
+      .then(cloudUrl => {
+        if (cloudUrl) {
+          console.log(`☁️  Reassemble background upload done: ${cloudUrl.substring(0, 60)}...`);
+          onCloudinaryDone?.(cloudUrl);
+        }
+      })
+      .catch(err => {
+        console.warn(`⚠️  Reassemble Cloudinary upload failed: ${err.message}`);
+      });
+
+    return { videoPath, videoUrl: localUrl };
+  }
+
+  /**
+   * Background thumbnail generator. Fire-and-forget: returns immediately so
+   * the API response isn't blocked. Generates the thumbnail, waits for its
+   * Cloudinary URL, then updates Video.thumbnail_url.
+   */
+  generateThumbnailForVideoInBackground(
+    videoId: string,
+    concept: { focus: string; emotion: string; visualHook: string; textOverlay?: string },
+    style: string = 'cinematic',
+  ): void {
+    (async () => {
+      try {
+        console.log(`🖼️  [bg] Generating thumbnail for video ${videoId}...`);
+        const cdnUrl = await imageService.generateThumbnailCloudUrl(concept as any, style);
+
+        await Video.update(
+          { thumbnail_url:  cdnUrl,
+            Tfocus:         concept.focus       ?? null,
+            Temotion:       concept.emotion     ?? null,
+            ToverLay:       concept.textOverlay ?? null,
+            TvisualHook:    concept.visualHook  ?? null,
+          },
+          { where: { id: videoId } },
+        );
+        console.log(`✅ [bg] thumbnail_url saved for video ${videoId}`);
+      } catch (err: any) {
+        console.warn(`⚠️  [bg] Thumbnail generation failed for ${videoId}: ${err.message}`);
+      }
+    })();
   }
 
 
@@ -763,8 +805,10 @@ async reGenNarration(
       });
       console.log(`✅ Video uploaded: ${result.secure_url.substring(0, 70)}…`);
 
-      // Delete local copy to save disk space after a successful upload
-      try { await unlink(localPath); } catch { /* ignore */ }
+      // NOTE: keep the local copy. /output/<id>.mp4 is served back to the
+      // frontend immediately after assembly (see reAssembleVideo). Deleting it
+      // would 404 any client that grabbed the local URL before the CDN URL
+      // replacement lands. A separate cleanup job can prune older files.
 
       return result.secure_url as string;
     } catch (err: any) {
@@ -836,92 +880,121 @@ async reGenNarration(
     }
   }
 
+  /**
+   * Prepare image + audio for every scene, in PARALLEL, with local-file cache.
+   *  - All downloads (images + audios) launched at once with Promise.all
+   *  - Already-downloaded files are reused (skipped) so repeated re-renders
+   *    that change only one scene don't re-fetch the others.
+   *  - All ffprobe calls run in parallel after downloads finish.
+   */
   private async downloadSceneMedia(
     scenes:  SceneWithMedia[],
     tempDir: string,
   ): Promise<MediaFile[]> {
+    console.log(`  ⚡ Preparing media for ${scenes.length} scenes in parallel...`);
+    const t0 = Date.now();
+
+    // Helper: skip download if cached file exists and is non-empty
+    const ensureCachedDownload = async (url: string, dest: string): Promise<string> => {
+      try {
+        const st = fs.statSync(dest);
+        if (st.size > 0) {
+          console.log(`    ↺ cache hit: ${path.basename(dest)}`);
+          return dest;
+        }
+      } catch { /* file missing, fall through */ }
+      await this.downloadFile(url, dest);
+      return dest;
+    };
+
+    // Resolve image to a local path (download / cache / use existing local file)
+    const prepImage = async (scene: SceneWithMedia, i: number): Promise<string | undefined> => {
+      if (!scene.imageUrl) {
+        console.warn(`      Scene ${i + 1}: no image URL`);
+        return undefined;
+      }
+      try {
+        if (scene.imageUrl.startsWith("http")) {
+          const dest = path.join(tempDir, `scene_${i}_image.png`);
+          return await ensureCachedDownload(scene.imageUrl, dest);
+        }
+        if (fs.existsSync(scene.imageUrl)) {
+          return path.isAbsolute(scene.imageUrl) ? scene.imageUrl : path.resolve(scene.imageUrl);
+        }
+        console.error(`    ✗ Local image missing: ${scene.imageUrl}`);
+        return undefined;
+      } catch (err: any) {
+        console.error(`    ✗ Image prep failed (scene ${i + 1}): ${err.message}`);
+        return undefined;
+      }
+    };
+
+    const prepAudio = async (scene: SceneWithMedia, i: number): Promise<string | undefined> => {
+      if (!scene.audioUrl) return undefined;
+      try {
+        const dest = path.join(tempDir, `scene_${i}_audio.mp3`);
+        return await ensureCachedDownload(scene.audioUrl, dest);
+      } catch (err: any) {
+        console.error(`    ✗ Audio download failed (scene ${i + 1}): ${err.message}`);
+        return undefined;
+      }
+    };
+
+    // ── Phase 1: kick off ALL image + audio prep concurrently ──────────────
+    const prepResults = await Promise.all(
+      scenes.map(async (scene, i) => {
+        const [imagePath, audioPath] = await Promise.all([
+          prepImage(scene, i),
+          prepAudio(scene, i),
+        ]);
+        return { scene, i, imagePath, audioPath };
+      }),
+    );
+    console.log(`  ✓ Media downloaded in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
+    // ── Phase 2: probe all audio durations in parallel ─────────────────────
+    const t1 = Date.now();
+    const probed = await Promise.all(
+      prepResults.map(async ({ audioPath }) =>
+        audioPath ? this.probeAudioDuration(audioPath).catch(() => 0) : 0,
+      ),
+    );
+    console.log(`  ✓ ffprobe (×${probed.filter(p => p > 0).length}) in ${((Date.now() - t1) / 1000).toFixed(1)}s`);
+
+    // ── Phase 3: assemble MediaFile[] preserving scene order ───────────────
     const mediaFiles: MediaFile[] = [];
-
-    for (let i = 0; i < scenes.length; i++) {
-      const scene = scenes[i];
-      console.log(`  [${i + 1}/${scenes.length}] Preparing media...`);
-
-
-      let imagePath: string | undefined;
-
-      if (scene.imageUrl) {
-        try {
-          if (scene.imageUrl.startsWith("http")) {
-            imagePath = path.join(tempDir, `scene_${i}_image.png`);
-            await this.downloadFile(scene.imageUrl, imagePath);
-            console.log(`    ✓ Image downloaded from URL`);
-          } else if (fs.existsSync(scene.imageUrl)) {
-            imagePath = path.isAbsolute(scene.imageUrl)
-              ? scene.imageUrl
-              : path.resolve(scene.imageUrl);
-            console.log(`    ✓ Using local image: ${imagePath}`);
-          } else {
-            console.error(`    ✗ Local file not found: ${scene.imageUrl}`);
-          }
-        } catch (err: any) {
-          console.error(`    ✗ Image preparation failed: ${err.message}`);
-        }
-      } else {
-        console.warn(`      No image URL for scene ${i + 1} - skipping`);
-      }
-
-
-      let audioPath: string | undefined;
-
-      if (scene.audioUrl) {
-        try {
-          audioPath = path.join(tempDir, `scene_${i}_audio.mp3`);
-          await this.downloadFile(scene.audioUrl, audioPath);
-          console.log(`    ✓ Audio downloaded`);
-        } catch (err: any) {
-          console.error(`    ✗ Audio download failed: ${err.message}`);
-        }
-      }
-
+    prepResults.forEach(({ scene, i, imagePath, audioPath }, idx) => {
       if (!imagePath) {
-        console.warn(`      Skipping scene ${i + 1} - no valid image`);
-        continue;
+        console.warn(`      Skipping scene ${i + 1} — no valid image`);
+        return;
       }
-
 
       let sceneDuration: number;
-
       if (audioPath) {
-        const probed = await this.probeAudioDuration(audioPath);
-        if (probed > 0) {
-          sceneDuration = probed + FADE_DURATION;
-          console.log(
-            `    ✓ Probed: ${probed.toFixed(2)}s (+${FADE_DURATION}s tail → ${sceneDuration.toFixed(2)}s)`,
-          );
+        const p = probed[idx];
+        if (p > 0) {
+          sceneDuration = p + FADE_DURATION;
         } else {
           const fallback = scene.audioDuration ?? 0;
           sceneDuration  = Math.max(fallback, MIN_SCENE_DURATION);
-          console.log(`      ffprobe failed, using fallback: ${sceneDuration.toFixed(2)}s`);
         }
       } else {
         sceneDuration = MIN_SCENE_DURATION;
-        console.log(`     No audio, scene held for ${sceneDuration}s`);
       }
 
       mediaFiles.push({
-        image:    imagePath,
-        audio:    audioPath,
-        duration: sceneDuration,
+        image:     imagePath,
+        audio:     audioPath,
+        duration:  sceneDuration,
         narration: scene.narration ?? "",
       });
-    }
+    });
 
     if (mediaFiles.length === 0) {
       throw new Error("No valid scenes with images found. Cannot create video.");
     }
 
-    console.log(`\n  ${mediaFiles.length}/${scenes.length} scenes ready for video assembly`);
-
+    console.log(`  ${mediaFiles.length}/${scenes.length} scenes ready for assembly\n`);
     return mediaFiles;
   }
 

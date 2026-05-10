@@ -109,7 +109,8 @@ class VideoController {
           progress: 100,
           final_video_url: result.videoUrl || null,
           srtPath: result.srtPath || null,
-          thumbnail_url: result.thumbnail?.thumbnailUrl   ?? null,
+          // thumbnail_url is filled in by the background job below
+          thumbnail_url: null,
           Tfocus:        result.thumbnail?.focus           ?? null,
           Temotion:      result.thumbnail?.emotion         ?? null,
           ToverLay:      result.thumbnail?.textOverlay     ?? null,
@@ -141,6 +142,23 @@ class VideoController {
 
         await t.commit();
         console.log('Successfully saved Video and all Scenes to DB');
+
+        // ── Kick off thumbnail generation in the background ─────────────────
+        // The user gets their video right away; the thumbnail trickles in a
+        // few seconds later and the Video.thumbnail_url column is updated
+        // once the Cloudinary URL is ready.
+        if (result.thumbnail?.focus && result.thumbnail?.visualHook) {
+          videoService.generateThumbnailForVideoInBackground(
+            video.id,
+            {
+              focus:       result.thumbnail.focus,
+              emotion:     result.thumbnail.emotion,
+              visualHook:  result.thumbnail.visualHook,
+              textOverlay: result.thumbnail.textOverlay,
+            },
+            imageStyle || 'cinematic',
+          );
+        }
 
         // Scene-үүдэд DB-ийн id-г нэмэн response-д оруулна
         const scenesWithIds = result.scenes.map((scene: any, index: number) => ({
@@ -375,10 +393,24 @@ class VideoController {
           bgmPath:          bgmPath          || undefined,
           bgmVolume:        bgmVolume        || "0.15",
           genre:            genre            || undefined,
-        }
+        },
+        // Background callback: when the Cloudinary upload finishes, swap the
+        // DB URL from the local /output/... path to the CDN URL.
+        async (cloudUrl) => {
+          try {
+            await Video.update(
+              { final_video_url: cloudUrl },
+              { where: { id: videoId } },
+            );
+            console.log(`☁️  Video ${videoId} final_video_url → CDN`);
+          } catch (err: any) {
+            console.warn(`⚠️  Could not update video ${videoId} CDN URL: ${err.message}`);
+          }
+        },
       );
 
-      // Persist the new video URL (may now be a Cloudinary URL)
+      // Persist the local URL right away so the frontend can play immediately.
+      // It will be overwritten with the Cloudinary URL by the background job above.
       await Video.update(
         { final_video_url: result.videoUrl },
         { where: { id: videoId } },
