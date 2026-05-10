@@ -787,6 +787,17 @@ async reGenNarration(
 
       if (options.bgmPath && this.BGM_LIBRARY[options.bgmPath]) {
         options.bgmPath = this.BGM_LIBRARY[options.bgmPath];
+      } else if (options.bgmPath && options.bgmPath.startsWith("http")) {
+        // Custom BGM uploaded by user → download to temp, then use local path
+        try {
+          const bgmLocal = path.join(tempVideoDir, "custom_bgm.mp3");
+          await this.downloadFile(options.bgmPath, bgmLocal);
+          console.log(`  ✓ Custom BGM downloaded → ${bgmLocal}`);
+          options.bgmPath = bgmLocal;
+        } catch (err: any) {
+          console.warn(`  ⚠️  Custom BGM download failed: ${err.message}`);
+          options.bgmPath = undefined;
+        }
       } else if (options.bgmPath && !fs.existsSync(options.bgmPath)) {
 
         console.warn(`  ⚠️  BGM path not found, skipping: ${options.bgmPath}`);

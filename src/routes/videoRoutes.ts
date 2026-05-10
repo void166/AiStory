@@ -60,4 +60,11 @@ router.post('/:videoId/regen-text',authMiddleware, videoController.regenSceneTex
 router.patch('/scene/:id/image', authMiddleware, videoController.reGenImage);
 router.patch('/scene/:id/narration', authMiddleware, videoController.reGenNarration);
 
+/**
+ * @route   POST /api/video/upload-asset
+ * @desc    Upload custom audio / image / bgm to Cloudinary
+ * @body    { kind: 'audio'|'image'|'bgm', base64, mimeType?, sceneId? }
+ */
+router.post('/upload-asset', authMiddleware, videoController.uploadAsset.bind(videoController));
+
 export default router;

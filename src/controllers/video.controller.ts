@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import { Op } from "sequelize";
 import { progressEmitter, emitProgress } from "../services/progressEmitter";
+import cloudinaryService from "../services/storage/cloudinaryService";
 
 
 function getStringParam(param: string | string[] | undefined): string | null {
@@ -582,6 +583,71 @@ class VideoController {
       res
         .status(500)
         .json({ success: false, error: error.message, details: error.stack });
+    }
+  }
+
+  /**
+   * POST /api/video/upload-asset
+   * Upload a custom audio / image / bgm asset to Cloudinary.
+   * Body: { kind: 'audio'|'image'|'bgm', base64, mimeType?, sceneId? }
+   *   - audio + sceneId  → updates scene.audioUrl
+   *   - image + sceneId  → updates scene.imageUrl
+   *   - bgm              → just returns the Cloudinary URL (frontend stores in bgmPath)
+   * Response: { url: string, audioDuration?: number }
+   */
+  async uploadAsset(req: Request, res: Response): Promise<void> {
+    try {
+      const { kind, base64, mimeType, sceneId } = req.body as {
+        kind?: "audio" | "image" | "bgm";
+        base64?: string;
+        mimeType?: string;
+        sceneId?: string;
+      };
+
+      if (!kind || !["audio", "image", "bgm"].includes(kind)) {
+        res.status(400).json({ success: false, error: "kind must be: audio | image | bgm" });
+        return;
+      }
+      if (!base64) {
+        res.status(400).json({ success: false, error: "base64 is required" });
+        return;
+      }
+
+      // Strip data URL prefix if present (e.g. "data:audio/mpeg;base64,...")
+      const cleaned = base64.includes(",") ? base64.split(",")[1] : base64;
+      const buffer  = Buffer.from(cleaned, "base64");
+
+      const folder   = kind === "image" ? "viralai/custom-images"
+                     : kind === "audio" ? "viralai/custom-audio"
+                     :                    "viralai/custom-bgm";
+      const filename = `${kind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      console.log(
+        `\n📤 Uploading custom ${kind} (${(buffer.length / 1024).toFixed(1)} KB) → ${folder}`
+      );
+
+      const url = await cloudinaryService.uploadBuffer(buffer, filename, folder);
+
+      // If the upload is for a known scene, persist the new URL onto that scene
+      if (sceneId && (kind === "audio" || kind === "image")) {
+        const scene = await Scene.findOne({ where: { id: sceneId } });
+        if (scene) {
+          if (kind === "audio") scene.audioUrl = url;
+          else                  scene.imageUrl = url;
+          await scene.save();
+          console.log(`  ✓ Scene ${sceneId} ${kind}Url updated`);
+        } else {
+          console.warn(`  ⚠️  Scene ${sceneId} not found — URL returned but DB not updated`);
+        }
+      }
+
+      res.status(200).json({ success: true, data: { url } });
+    } catch (error: any) {
+      console.error("\n❌ Upload asset error:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message || "Upload failed",
+      });
     }
   }
 }
