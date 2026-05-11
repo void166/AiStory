@@ -4,6 +4,7 @@ import { Project }       from "./Project";
 import { Video }         from "./Video";
 import { Scene }         from "./Scenes";
 import { Subscriptions } from "./Subscriptions";
+import { Evaluation }    from "./Evaluation";
 
 // Cast to ModelStatic<Model> so TypeScript resolves the static association
 // methods (hasMany / belongsTo) regardless of the concrete attribute types.
@@ -12,6 +13,7 @@ const ProjectModel       = Project       as unknown as ModelStatic<Model>;
 const VideoModel         = Video         as unknown as ModelStatic<Model>;
 const SceneModel         = Scene         as unknown as ModelStatic<Model>;
 const SubscriptionModel  = Subscriptions as unknown as ModelStatic<Model>;
+const EvaluationModel    = Evaluation    as unknown as ModelStatic<Model>;
 
 export const associations = () => {
   // User → Projects
@@ -19,7 +21,10 @@ export const associations = () => {
   ProjectModel.belongsTo(UserModel, { foreignKey: "userId" });
 
   // Project → Videos
-  ProjectModel.hasMany(VideoModel, { foreignKey: "projectId", onDelete: "CASCADE" });
+  //  - onDelete SET NULL so deleting a project does NOT destroy its videos
+  //    (they simply become "unassigned"). Matches the controller's manual
+  //    unlink behaviour, but is safe even if that step is skipped.
+  ProjectModel.hasMany(VideoModel, { foreignKey: "projectId", onDelete: "SET NULL" });
   VideoModel.belongsTo(ProjectModel, { foreignKey: "projectId" });
 
   // User → Videos (direct shortcut)
@@ -33,4 +38,8 @@ export const associations = () => {
   // User → Subscription (1:1)
   UserModel.hasOne(SubscriptionModel, { foreignKey: "userId", onDelete: "CASCADE" });
   SubscriptionModel.belongsTo(UserModel, { foreignKey: "userId" });
+
+  // Video → Evaluation (1:1)
+  VideoModel.hasOne(EvaluationModel, { foreignKey: "videoId", onDelete: "CASCADE" });
+  EvaluationModel.belongsTo(VideoModel, { foreignKey: "videoId" });
 };

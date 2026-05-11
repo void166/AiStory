@@ -88,11 +88,17 @@ interface VideoGenerationResult {
   scenes:    SceneWithMedia[];
   status:    "processing" | "completed" | "failed";
   progress:  number;
-  thumbnail?: GeneratedThumbnail;  
+  thumbnail?: GeneratedThumbnail;
   createdAt: Date;
   videoPath?: string;
   videoUrl?:  string;
   srtPath?:   string;
+  /**
+   * Per-scene Cloudinary CDN URL promises. The caller (controller) awaits
+   * these in the background to patch Scene.imageUrl from local path → CDN URL
+   * once each async upload finishes.
+   */
+  sceneCloudUrlPromises?: Promise<string>[];
 }
 
 interface MediaFile {
@@ -187,13 +193,36 @@ class VideoService {
           }
         : undefined;
 
-      // Start images in parallel while audio is generated sequentially
-      const imagePromises = script.script.map((scene) =>
+      // ── Start images in parallel ─────────────────────────────────────────
+      // generateSingle returns a LOCAL path immediately so FFmpeg can start
+      // assembling without waiting on Cloudinary. We also collect a per-scene
+      // promise that resolves to the Cloudinary CDN URL once the async upload
+      // completes — those are returned alongside the result so the controller
+      // can patch each Scene.imageUrl in the background, replacing the local
+      // path with the CDN URL once it lands.
+      const sceneCloudResolvers: Array<{ resolve: (url: string) => void; reject: (err: Error) => void; promise: Promise<string> }> =
+        script.script.map(() => {
+          let resolve!: (url: string) => void;
+          let reject!: (err: Error) => void;
+          const promise = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
+          return { resolve, reject, promise };
+        });
+
+      const imagePromises = script.script.map((scene, i) =>
         imageService.generateSingle(
           { time: scene.time, scene: scene.scene, description: scene.imagePrompt || scene.visual },
           scene.imagePrompt || scene.visual,
-        ),
+          undefined,
+          (cloudUrl) => sceneCloudResolvers[i].resolve(cloudUrl),
+        ).catch(err => {
+          // If image generation itself fails, also fail the cloud-URL promise
+          sceneCloudResolvers[i].reject(err instanceof Error ? err : new Error(String(err)));
+          throw err;
+        }),
       );
+
+      // Expose the cloud-URL promises so the caller can update DB rows later
+      const sceneCloudUrlPromises = sceneCloudResolvers.map(r => r.promise);
 
       const totalScenes = script.script.length;
       const processedScenes: SceneWithMedia[] = [];
@@ -278,6 +307,10 @@ class VideoService {
         videoUrl,
         srtPath,
         thumbnail,
+        // Promises that resolve (per scene) once each image's Cloudinary upload
+        // finishes. The controller awaits these in the background to patch the
+        // Scene.imageUrl column from the local path to the CDN URL.
+        sceneCloudUrlPromises,
       };
     } catch (err: any) {
       emit({ step: 'error', message: err.message || 'Видео үүсгэхэд алдаа гарлаа' });
@@ -1117,7 +1150,12 @@ if (srtPath && !srtExists) {
         for (let i = 1; i < N; i++) {
           cumulativeDuration += mediaFiles[i - 1].duration;
           const offset     = Math.max(0, cumulativeDuration - FADE_DURATION * i);
-          const rawTransition = effectConfigs[i-1]?.transition || "fade";
+          const rawTransitionMaybe = effectConfigs[i-1]?.transition;
+          const VALID = ['fadeblack', 'fade', 'wiperight', 'wipeleft', 'hard-cut'];
+          // Defensive: drop any unknown value (e.g. the frontend 'auto' marker)
+          const rawTransition = (rawTransitionMaybe && VALID.includes(rawTransitionMaybe))
+            ? rawTransitionMaybe
+            : "fade";
 
           const isLast     = i === N - 1;
           const out        = isLast ? (subtitleFilter ? "outv_raw" : "outv") : `v${i}`;

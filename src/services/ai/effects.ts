@@ -82,10 +82,20 @@ const MOTION_SEQUENCE: MotionPreset[] = [
  * Automatically assigns motion / transition / impact to every scene.
  * Pass `userTransition` to force the same transition for every scene.
  */
+const VALID_TRANSITIONS: TransitionPreset[] = [
+  'fadeblack', 'fade', 'wiperight', 'wipeleft', 'hard-cut',
+];
+
 export function assignSceneEffects(
   scenes: Array<{ narration: string }>,
-  userTransition?: TransitionPreset,
+  userTransition?: TransitionPreset | 'auto',
 ): SceneEffectConfig[] {
+  // Treat 'auto' (and any non-preset value) as "no override" so the
+  // per-scene rotation logic kicks in.
+  const override = userTransition && VALID_TRANSITIONS.includes(userTransition as TransitionPreset)
+    ? userTransition as TransitionPreset
+    : undefined;
+
   return scenes.map((scene, i) => {
     const motion: MotionPreset =
       i === 0
@@ -96,7 +106,7 @@ export function assignSceneEffects(
     const impact = wordCount <= 6;
 
     const transition: TransitionPreset =
-      userTransition ?? (i % 5 === 3 ? 'fade' : 'fadeblack');
+      override ?? (i % 5 === 3 ? 'fade' : 'fadeblack');
 
     return { motion, transition, impact };
   });

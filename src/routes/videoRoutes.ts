@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import videoController from '../controllers/video.controller';
+import evaluationController from '../controllers/evaluation.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -66,5 +67,32 @@ router.patch('/scene/:id/narration', authMiddleware, videoController.reGenNarrat
  * @body    { kind: 'audio'|'image'|'bgm', base64, mimeType?, sceneId? }
  */
 router.post('/upload-asset', authMiddleware, videoController.uploadAsset.bind(videoController));
+
+// ─── Evaluation ──────────────────────────────────────────────────────────────
+/**
+ * @route   POST /api/video/:videoId/evaluate
+ * @desc    Run / re-run AI viral score + health checks for a video
+ */
+router.post('/:videoId/evaluate', authMiddleware, evaluationController.evaluate.bind(evaluationController));
+
+/**
+ * @route   GET  /api/video/:videoId/evaluation
+ * @desc    Get the latest evaluation (null if not yet evaluated)
+ */
+router.get('/:videoId/evaluation', authMiddleware, evaluationController.get.bind(evaluationController));
+
+/**
+ * @route   PATCH /api/video/:videoId/evaluation/rating
+ * @desc    Set user star rating + like/dislike
+ * @body    { rating?: number 0-5, liked?: boolean | null }
+ */
+router.patch('/:videoId/evaluation/rating', authMiddleware, evaluationController.updateRating.bind(evaluationController));
+
+/**
+ * @route   POST /api/video/script/variants
+ * @desc    Generate 2 script variants (A/B) for the user to compare before producing the full video
+ * @body    { topic, genre?, imageStyle?, language?, duration?, scriptProvider? }
+ */
+router.post('/script/variants', authMiddleware, evaluationController.generateVariants.bind(evaluationController));
 
 export default router;

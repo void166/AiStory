@@ -4,6 +4,7 @@ import scriptService from "../services/ai/scriptService";
 import { Video } from "../model/Video";
 import type { TransitionPreset } from "../services/ai/effects";
 import { Scene } from "../model/Scenes";
+import { Project } from "../model/Project";
 import sequelize from "../config/db";
 import { error } from "node:console";
 import { AuthRequest } from "../middleware/auth.middleware";
@@ -75,9 +76,13 @@ class VideoController {
         language: language || "mongolian",
         imageStyle: imageStyle || "anime",
         voiceId: voiceId || undefined,
-        bgmPath: bgmPath || "history1",
-        bgmVolume: bgmVolume || "0.15",
-        globalTransition: globalTransition || undefined,
+        // Respect explicit empty string (= user wants no music)
+        bgmPath: bgmPath !== undefined ? bgmPath : "history1",
+        bgmVolume: typeof bgmVolume === 'number' ? String(bgmVolume) : (bgmVolume || "0.15"),
+        // 'auto' (and unknown values) → leave undefined so assignSceneEffects picks at random
+        globalTransition: (globalTransition && globalTransition !== 'auto')
+          ? globalTransition
+          : undefined,
         sceneEffects: sceneEffects || undefined,
         subtitleStyle: subtitleStyle || undefined,
         disableSubtitles: disableSubtitles ?? false,
@@ -90,13 +95,26 @@ class VideoController {
 
       console.log("\nSaviong to db");
 
+      // Validate projectId exists & belongs to this user; else fall back to null.
+      // Prevents FK constraint violation on Video.create when frontend sends
+      // a stale / deleted project id.
+      let safeProjectId: string | null = null;
+      if (projectId && typeof projectId === 'string' && projectId.trim()) {
+        const project = await Project.findOne({ where: { id: projectId.trim(), userId } });
+        if (project) {
+          safeProjectId = projectId.trim();
+        } else {
+          console.warn(`⚠️  Project ${projectId} not found for user ${userId} — saving video as unassigned`);
+        }
+      }
+
       let t: Awaited<ReturnType<typeof sequelize.transaction>> | null = null;
       try {
         t = await sequelize.transaction();
 
         const video = await Video.create({
           userId: userId,
-          projectId: projectId?.trim() ? projectId : null,
+          projectId: safeProjectId,
           title: title || topic,
           topic,
           genre: genre || "horror",
@@ -158,6 +176,27 @@ class VideoController {
             },
             imageStyle || 'cinematic',
           );
+        }
+
+        // ── Patch Scene.imageUrl with Cloudinary URLs as they finish ────────
+        // Each scene's image was saved with its LOCAL path so FFmpeg could
+        // assemble immediately. The actual Cloudinary upload runs async — when
+        // each one resolves, swap the DB column over to the CDN URL.
+        if (result.sceneCloudUrlPromises?.length && createdScenes.length) {
+          result.sceneCloudUrlPromises.forEach((p, idx) => {
+            const sceneRow = createdScenes[idx];
+            if (!sceneRow) return;
+            p.then(async (cloudUrl) => {
+              try {
+                await Scene.update({ imageUrl: cloudUrl }, { where: { id: sceneRow.id } });
+                console.log(`☁️  Scene ${idx + 1} (${sceneRow.id}) imageUrl → CDN`);
+              } catch (err: any) {
+                console.warn(`⚠️  Failed to patch scene ${idx + 1} imageUrl: ${err.message}`);
+              }
+            }).catch(err => {
+              console.warn(`⚠️  Scene ${idx + 1} Cloudinary upload failed: ${err.message}`);
+            });
+          });
         }
 
         // Scene-үүдэд DB-ийн id-г нэмэн response-д оруулна
