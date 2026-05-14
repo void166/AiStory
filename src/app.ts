@@ -45,6 +45,9 @@ app.use('/output', express.static(path.join(process.cwd(), 'output')));
 // Serve BGM library so the frontend can preview tracks before generating
 app.use('/bgm', express.static(path.join(process.cwd(), 'src', 'services', 'bgMusic')));
 
+// Serve curated visual-style preview images
+app.use('/style-previews', express.static(path.join(process.cwd(), 'src', 'services', 'stylePreviews')));
+
 // In production serve the built React frontend from ./public
 if (isProd) {
   app.use(express.static(path.join(process.cwd(), 'public')));
