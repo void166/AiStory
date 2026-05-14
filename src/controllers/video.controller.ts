@@ -20,6 +20,24 @@ function getStringParam(param: string | string[] | undefined): string | null {
   return Array.isArray(param) ? param[0] : param;
 }
 
+// ─── Cancellation registry ──────────────────────────────────────────────────
+// Maps jobId → AbortController so the cancel endpoint can signal an
+// in-progress generation to stop and persist its partial work as a draft.
+const activeJobs = new Map<string, AbortController>();
+
+export function getActiveJobController(jobId: string): AbortController | undefined {
+  return activeJobs.get(jobId);
+}
+
+export class CancellationError extends Error {
+  public partial: any;
+  constructor(message: string, partial: any) {
+    super(message);
+    this.name = 'CancellationError';
+    this.partial = partial;
+  }
+}
+
 class VideoController {
   async generateVideos(req: Request, res: Response): Promise<void> {
     try {
@@ -70,26 +88,114 @@ class VideoController {
       console.log("  Subtitles disabled:", disableSubtitles ?? false);
       console.log("projectId: ", projectId);
 
-      const result = await videoService.generateVideos(topic, {
-        duration: duration || 60,
-        genre: genre || "horror",
-        language: language || "mongolian",
-        imageStyle: imageStyle || "anime",
-        voiceId: voiceId || undefined,
-        // Respect explicit empty string (= user wants no music)
-        bgmPath: bgmPath !== undefined ? bgmPath : "history1",
-        bgmVolume: typeof bgmVolume === 'number' ? String(bgmVolume) : (bgmVolume || "0.15"),
-        // 'auto' (and unknown values) → leave undefined so assignSceneEffects picks at random
-        globalTransition: (globalTransition && globalTransition !== 'auto')
-          ? globalTransition
-          : undefined,
-        sceneEffects: sceneEffects || undefined,
-        subtitleStyle: subtitleStyle || undefined,
-        disableSubtitles: disableSubtitles ?? false,
-        ttsProvider:    ttsProvider    || 'gemini',
-        scriptProvider: scriptProvider || 'anthropic',
-        onProgress: jobId ? (event) => emitProgress(jobId, event) : undefined,
-      });
+      // Register an AbortController so /cancel can signal this job
+      const abortController = new AbortController();
+      if (jobId) activeJobs.set(jobId, abortController);
+
+      let result;
+      try {
+        result = await videoService.generateVideos(topic, {
+          duration: duration || 60,
+          genre: genre || "horror",
+          language: language || "mongolian",
+          imageStyle: imageStyle || "anime",
+          voiceId: voiceId || undefined,
+          // Respect explicit empty string (= user wants no music)
+          bgmPath: bgmPath !== undefined ? bgmPath : "history1",
+          bgmVolume: typeof bgmVolume === 'number' ? String(bgmVolume) : (bgmVolume || "0.15"),
+          // 'auto' (and unknown values) → leave undefined so assignSceneEffects picks at random
+          globalTransition: (globalTransition && globalTransition !== 'auto')
+            ? globalTransition
+            : undefined,
+          sceneEffects: sceneEffects || undefined,
+          subtitleStyle: subtitleStyle || undefined,
+          disableSubtitles: disableSubtitles ?? false,
+          ttsProvider:    ttsProvider    || 'gemini',
+          scriptProvider: scriptProvider || 'anthropic',
+          onProgress: jobId ? (event) => emitProgress(jobId, event) : undefined,
+          signal: abortController.signal,
+        });
+      } catch (err: any) {
+        if (jobId) activeJobs.delete(jobId);
+        // User cancelled mid-generation: save partial work as a draft Video
+        if (err instanceof CancellationError || err?.name === 'CancellationError' || abortController.signal.aborted) {
+          const partial = err?.partial ?? {};
+          console.log('🛑 Generation cancelled, saving partial state as draft');
+
+          let safeProjectId: string | null = null;
+          if (projectId && typeof projectId === 'string' && projectId.trim()) {
+            const project = await Project.findOne({ where: { id: projectId.trim(), userId } });
+            if (project) safeProjectId = projectId.trim();
+          }
+
+          const t = await sequelize.transaction();
+          try {
+            const draft = await Video.create({
+              userId,
+              projectId: safeProjectId,
+              title: title || topic,
+              topic,
+              genre: genre || "horror",
+              language: language || "mongolian",
+              imageStyle: imageStyle || "anime",
+              bgmPath: bgmPath !== undefined ? bgmPath : "history1",
+              bgmVolume: typeof bgmVolume === 'number' ? bgmVolume : 0.15,
+              duration: partial?.duration || duration || 60,
+              status: "draft",
+              progress: partial?.progress ?? 0,
+              final_video_url: null,
+              srtPath: null,
+              thumbnail_url: null,
+              Tfocus:      partial?.thumbnail?.focus       ?? null,
+              Temotion:    partial?.thumbnail?.emotion     ?? null,
+              ToverLay:    partial?.thumbnail?.textOverlay ?? null,
+              TvisualHook: partial?.thumbnail?.visualHook  ?? null,
+            } as any, { transaction: t });
+
+            // Save whatever scenes were produced so the user can pick up where they left off
+            if (Array.isArray(partial?.scenes) && partial.scenes.length > 0) {
+              const scenesData = partial.scenes.map((scene: any, index: number) => ({
+                videoId:        draft.id,
+                sceneIndex:     index,
+                time:           scene.time   ?? `${index*5}:00`,
+                scene:          scene.scene  ?? `Scene ${index + 1}`,
+                narration:      scene.narration || null,
+                imagePrompt:    scene.imagePrompt || scene.visual || null,
+                imageUrl:       scene.imageUrl || null,
+                audioUrl:       scene.audioUrl || null,
+                audioDuration:  scene.audioDuration || null,
+                words:          scene.words ? JSON.stringify(scene.words) : null,
+                transitionType: scene.transition   || null,
+                motionEffect:   scene.motionEffect || null,
+                voiceId:        voiceId || null,
+                ttsProvider:    scene.ttsProvider || ttsProvider || 'gemini',
+              }));
+              await Scene.bulkCreate(scenesData, { transaction: t });
+            }
+            await t.commit();
+
+            res.status(200).json({
+              success: true,
+              cancelled: true,
+              data: {
+                videoId: draft.id,
+                status: 'draft',
+                scenesCount: Array.isArray(partial?.scenes) ? partial.scenes.length : 0,
+              },
+              message: 'Generation cancelled. Draft saved.',
+            });
+            return;
+          } catch (dbErr: any) {
+            await t.rollback();
+            console.error('Failed to save draft after cancellation:', dbErr);
+            res.status(500).json({ success: false, error: 'Cancelled, but failed to save draft' });
+            return;
+          }
+        }
+        throw err;
+      } finally {
+        if (jobId) activeJobs.delete(jobId);
+      }
 
       console.log("\nVideo generation successful");
 
@@ -515,8 +621,22 @@ class VideoController {
       const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "20"), 10)));
       const offset = (page - 1) * limit;
 
+      // ?status=completed | draft | failed   (default: completed only)
+      const statusParam = String(req.query.status ?? "completed").trim();
+      const where: any = { userId };
+      if (statusParam === "all") {
+        // no status filter
+      } else if (statusParam === "draft") {
+        where.status = "draft";
+      } else if (statusParam === "failed") {
+        where.status = "failed";
+      } else {
+        // default: only show finished, watchable videos
+        where.status = "completed";
+      }
+
       const { count, rows: videos } = await Video.findAndCountAll({
-        where: { userId },
+        where,
         attributes: [
           "id", "title", "topic", "genre", "language", "imageStyle",
           "status", "duration", "final_video_url",
@@ -720,6 +840,28 @@ class VideoController {
         error: error.message || "Upload failed",
       });
     }
+  }
+
+  /**
+   * POST /api/video/cancel/:jobId
+   * Signals an in-progress generation to abort. The /generate endpoint that
+   * owns the job will catch the abort, save the partial state as a draft Video,
+   * and respond to its caller with { cancelled: true, data: { videoId } }.
+   */
+  async cancelGeneration(req: Request, res: Response): Promise<void> {
+    const jobId = getStringParam(req.params.jobId);
+    if (!jobId) {
+      res.status(400).json({ success: false, error: 'jobId is required' });
+      return;
+    }
+    const controller = activeJobs.get(jobId);
+    if (!controller) {
+      res.status(404).json({ success: false, error: 'No active job with that id' });
+      return;
+    }
+    controller.abort();
+    console.log(`🛑 Cancel requested for job ${jobId}`);
+    res.status(200).json({ success: true, message: 'Cancel signal sent' });
   }
 }
 

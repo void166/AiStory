@@ -68,6 +68,12 @@ router.patch('/scene/:id/narration', authMiddleware, videoController.reGenNarrat
  */
 router.post('/upload-asset', authMiddleware, videoController.uploadAsset.bind(videoController));
 
+/**
+ * @route   POST /api/video/cancel/:jobId
+ * @desc    Signal an in-progress generation to abort; partial state is saved as a draft.
+ */
+router.post('/cancel/:jobId', authMiddleware, videoController.cancelGeneration.bind(videoController));
+
 // ─── Evaluation ──────────────────────────────────────────────────────────────
 /**
  * @route   POST /api/video/:videoId/evaluate

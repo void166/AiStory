@@ -23,6 +23,22 @@ import {
 } from "./effects";
 import type { ProgressEvent } from "../progressEmitter";
 
+// ─── Cancellation primitives ────────────────────────────────────────────────
+export class CancellationError extends Error {
+  public partial: any;
+  constructor(message: string, partial: any) {
+    super(message);
+    this.name = 'CancellationError';
+    this.partial = partial;
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, partial: any): void {
+  if (signal?.aborted) {
+    throw new CancellationError('Generation cancelled by user', partial);
+  }
+}
+
 
 
 
@@ -64,6 +80,12 @@ export interface VideoGenerationOptions {
   scriptProvider? : 'anthropic' | 'groq';
   ttsProvider?: 'elevenlabs' | 'gemini' | 'chimege';
   onProgress?: (event: ProgressEvent) => void;
+  /**
+   * Abort signal that the caller (controller) uses to cancel generation.
+   * When aborted, generateVideos throws a CancellationError whose `partial`
+   * field carries whatever scenes/state were produced before the cancel.
+   */
+  signal?: AbortSignal;
 }
 
 interface SceneWithMedia {
@@ -193,6 +215,17 @@ class VideoService {
           }
         : undefined;
 
+      // Cancellation checkpoint #1 — after script + thumbnail concept
+      throwIfAborted(options.signal, {
+        scenes: script.script.map((s: any) => ({
+          time: s.time, scene: s.scene, narration: s.narration,
+          imagePrompt: s.imagePrompt || s.visual,
+        })),
+        duration: script.duration,
+        progress: 15,
+        thumbnail,
+      });
+
       // ── Start images in parallel ─────────────────────────────────────────
       // generateSingle returns a LOCAL path immediately so FFmpeg can start
       // assembling without waiting on Cloudinary. We also collect a per-scene
@@ -238,6 +271,15 @@ class VideoService {
         });
         const audioResults = await this.generateAudioForScenes([scene], options.voiceId, options.ttsProvider ?? 'gemini');
         processedScenes.push({ ...audioResults[0] } as SceneWithMedia);
+
+        // Cancellation checkpoint per scene — partial includes whatever audio
+        // has been produced so far so the draft retains those URLs
+        throwIfAborted(options.signal, {
+          scenes: processedScenes,
+          duration: script.duration,
+          progress: 20 + Math.round(((i + 1) / totalScenes) * 30),
+          thumbnail,
+        });
       }
 
       emit({ step: 'generating_images', message: 'Processing Images...', percent: 50 });
@@ -268,6 +310,15 @@ class VideoService {
       console.log(
         `All scenes processed: ${processedScenes.filter((s) => s.imageUrl).length}/${script.script.length} with images`,
       );
+
+      // Last cancellation checkpoint — after audio + images, before FFmpeg
+      // (FFmpeg itself isn't trivially cancellable, so this is our last chance)
+      throwIfAborted(options.signal, {
+        scenes: processedScenes,
+        duration: script.duration,
+        progress: 65,
+        thumbnail,
+      });
 
       emit({ step: 'rendering_video', message: 'Assembling Video...', percent: 70 });
       const videoPath = await this.assembleVideo(
@@ -451,26 +502,36 @@ async reGenImage(
   const scene = await Scene.findOne({ where: { id } });
   if (!scene) throw new Error(`Scene ${id} not found`);
 
-  scene.imagePrompt = imagePrompt;
+  // Persist the prompt now (it's independent of the upload race below)
+  await Scene.update({ imagePrompt }, { where: { id } });
+
+  // Track whether Cloudinary has already reported back so we don't
+  // race-overwrite the CDN URL with the local path.
+  let cloudLanded = false;
 
   const newImageUrl = await imageService.generateSingle(
     { time: scene.time, scene: scene.scene, description: imagePrompt },
     imagePrompt,
     undefined,
-    // When Cloudinary upload finishes in the background, replace local path with CDN URL
     async (cloudUrl) => {
+      cloudLanded = true;
       try {
         await Scene.update({ imageUrl: cloudUrl }, { where: { id } });
-        console.log(`☁️  Scene ${id} imageUrl updated to Cloudinary URL`);
+        console.log(`☁️  Scene ${id} imageUrl → CDN: ${cloudUrl.substring(0, 60)}...`);
       } catch (err: any) {
-        console.warn(`⚠️  Could not update scene ${id} with Cloudinary URL: ${err.message}`);
+        console.warn(`⚠️  Could not update scene ${id} with CDN URL: ${err.message}`);
       }
     },
   );
 
-  // Save local path immediately so the response is fast
-  scene.imageUrl = newImageUrl;
-  await scene.save();
+  // Only write the LOCAL path if the cloud URL hasn't already landed.
+  // Otherwise we'd overwrite the CDN URL just written by the callback.
+  if (!cloudLanded) {
+    const fresh = await Scene.findOne({ where: { id }, attributes: ['imageUrl'] });
+    if (!fresh?.imageUrl?.startsWith('http')) {
+      await Scene.update({ imageUrl: newImageUrl }, { where: { id } });
+    }
+  }
 
   console.log(`  ✓ Image regenerated for scene ${id}: ${newImageUrl.substring(0, 60)}...`);
   return { imageUrl: newImageUrl };

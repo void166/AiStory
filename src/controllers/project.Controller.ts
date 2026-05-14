@@ -35,14 +35,14 @@ export class ProjectController {
       // Attach video count per project
       const projectIds = projects.map(p => p.id);
       const videos = projectIds.length
-        ? await Video.findAll({ where: { userId, projectId: projectIds as any }, attributes: ["projectId"] })
+        ? await Video.findAll({ where: { userId, projectId: projectIds as any, status: 'completed' }, attributes: ["projectId"] })
         : [];
 
       const countMap: Record<string, number> = {};
       videos.forEach((v: any) => { countMap[v.projectId] = (countMap[v.projectId] || 0) + 1; });
 
-      // Count of videos without a project
-      const unassigned = await Video.count({ where: { userId, projectId: null } });
+      // Count of videos without a project (completed only)
+      const unassigned = await Video.count({ where: { userId, projectId: null, status: 'completed' } });
 
       const result = projects.map(p => ({ ...p.toJSON(), videoCount: countMap[p.id] || 0 }));
 
@@ -63,7 +63,7 @@ export class ProjectController {
       if (!project) return res.status(404).json({ success: false, message: "Project олдсонгүй" });
 
       const videos = await Video.findAll({
-        where: { projectId: id, userId },
+        where: { projectId: id, userId, status: 'completed' },
         attributes: ["id","title","topic","genre","status","duration","final_video_url","thumbnail_url","Tfocus","createdAt"],
         order: [["createdAt", "DESC"]],
       });
@@ -150,7 +150,7 @@ export class ProjectController {
       if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
       const videos = await Video.findAll({
-        where: { userId, projectId: null },
+        where: { userId, projectId: null, status: 'completed' },
         attributes: ["id","title","topic","genre","status","duration","final_video_url","thumbnail_url","Tfocus","createdAt"],
         order: [["createdAt", "DESC"]],
       });
