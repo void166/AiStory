@@ -4,28 +4,18 @@ import sequelize from "../config/db";
 interface EvaluationAttributes {
   id:           string;
   videoId:      string;
-
-  // AI viral score (0–100 each, plus letter grade)
   overallScore: number;
-  grade:        string;          // A+ / A / B+ / B / C / D / F
+  grade:        string;       
   hookScore:        number;
   pacingScore:      number;
   emotionScore:     number;
   clarityScore:     number;
   originalityScore: number;
-
-  // Per-scene scores (JSON-serialised array)
-  sceneScores:  string | null;   // [{ sceneIndex, score, weakness? }]
-
-  // Plain-text suggestions from the LLM
-  suggestions:  string | null;   // JSON array of strings
-
-  // Automatic health-check warnings (no LLM)
-  healthIssues: string | null;   // JSON array of { code, message, severity }
-
-  // User-facing feedback
-  userRating:   number | null;   // 0–5 stars
-  userLiked:    boolean | null;  // true = like, false = dislike, null = no opinion
+  sceneScores:  string | null;
+  suggestions:  string | null;
+  healthIssues: string | null;  
+  userRating:   number | null;   
+  userLiked:    boolean | null;  
 }
 
 interface EvaluationCreationAttributes
