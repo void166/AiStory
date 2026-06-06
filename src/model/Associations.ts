@@ -5,6 +5,7 @@ import { Video }         from "./Video";
 import { Scene }         from "./Scenes";
 import { Subscriptions } from "./Subscriptions";
 import { Evaluation }    from "./Evaluation";
+import { Notification }  from "./Notification";
 
 // Cast to ModelStatic<Model> so TypeScript resolves the static association
 // methods (hasMany / belongsTo) regardless of the concrete attribute types.
@@ -14,6 +15,7 @@ const VideoModel         = Video         as unknown as ModelStatic<Model>;
 const SceneModel         = Scene         as unknown as ModelStatic<Model>;
 const SubscriptionModel  = Subscriptions as unknown as ModelStatic<Model>;
 const EvaluationModel    = Evaluation    as unknown as ModelStatic<Model>;
+const NotificationModel  = Notification  as unknown as ModelStatic<Model>;
 
 export const associations = () => {
   // User → Projects
@@ -42,4 +44,8 @@ export const associations = () => {
   // Video → Evaluation (1:1)
   VideoModel.hasOne(EvaluationModel, { foreignKey: "videoId", onDelete: "CASCADE" });
   EvaluationModel.belongsTo(VideoModel, { foreignKey: "videoId" });
+
+  // User → Notifications (1:many)
+  UserModel.hasMany(NotificationModel, { foreignKey: "userId", onDelete: "CASCADE" });
+  NotificationModel.belongsTo(UserModel, { foreignKey: "userId" });
 };

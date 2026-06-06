@@ -2,8 +2,16 @@ import { Router } from 'express';
 import videoController from '../controllers/video.controller';
 import evaluationController from '../controllers/evaluation.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
+import { pdfUploadMiddleware, summarisePdf } from '../controllers/pdfVideo.controller';
 
 const router = Router();
+
+/**
+ * @route   POST /api/video/pdf/summarise
+ * @desc    Upload a PDF, extract text, return a viral-ready topic + settings.
+ * @body    multipart/form-data { pdf: File }
+ */
+router.post('/pdf/summarise', authMiddleware, pdfUploadMiddleware, summarisePdf);
 
 /**
  * @route   POST /api/video/generate

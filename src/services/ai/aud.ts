@@ -32,7 +32,58 @@ interface GeminiTtsOptions {
   speed?: number;
   pitch?: number;
   sample_rate?: number;
+  /** Genre slug — used to pick voice + delivery style. Matches frontend GENRES list. */
+  genre?: string;
+  /** Source language — affects the "Read in X" instruction. */
+  language?: 'mongolian' | 'english';
+  /** Override prompt entirely (advanced). If set, ignores genre/language style mapping. */
+  customPrompt?: string;
+  /** Override LLM temperature for expressiveness (0.7-1.2 range works well). */
+  temperature?: number;
 }
+
+// ─── Genre → delivery style (Gemini TTS prompt fragment) ──────────────────────
+// Gemini TTS бол LLM-based — promt-нд "ямар өнгөөр уншихыг" зааж өгснөөр
+// дуу гарах мэдрэмж эрс өөрчлөгддөг. Default нь хэт flat учир genre-aware
+// styling нь хамгийн их impact-тай tweak.
+const GEMINI_STYLE_BY_GENRE: Record<string, string> = {
+  scary:         'in a low, ominous whisper with dramatic pauses, building tension and dread',
+  trueCrime:     'in a serious, investigative documentary tone — slow, deliberate, weighty',
+  conspiracy:    'in a hushed, secretive tone, as if revealing forbidden knowledge',
+  darkHistory:   'in a grave, somber storytelling voice with measured, deliberate pacing',
+  psychology:    'in a calm, thoughtful, intimate tone — like a TED talk speaker',
+  mythology:     'in an epic, theatrical storytelling voice, like an ancient bard reciting a legend',
+  stoic:         'in a slow, wise, contemplative tone with gravitas and quiet authority',
+  mythBusting:   'in a confident, slightly playful tone — debunking myths with energy and wit',
+  survival:      'in an urgent, intense tone — life-or-death narration with rising tension',
+  futuristic:    'in a crisp, slightly mechanical but engaging tone — sci-fi documentary style',
+  biography:     'in a warm, reverent storytelling voice with genuine admiration',
+  shockingFacts: 'in an excited, surprised tone — pulling the listener in with every fact',
+  business:      'in a clear, confident, podcast-host tone — authoritative but conversational',
+  sciExplained:  'in a curious, enthusiastic teacher tone — like an engaging science YouTuber',
+  education:     'in a clear, engaging instructor tone — friendly but authoritative',
+};
+
+// ─── Genre → voice preset ─────────────────────────────────────────────────────
+// Gemini-ийн pre-built voices бүр өөр timbre/gender-тэй. Genre-тэй
+// тааруулж өгснөөр default "Kore" гэдэг neutral дуунаас илт сайжирна.
+const GEMINI_VOICE_BY_GENRE: Record<string, string> = {
+  scary:         'Charon',   // deep, ominous
+  darkHistory:   'Charon',
+  conspiracy:    'Charon',
+  trueCrime:     'Fenrir',   // intense male
+  survival:      'Fenrir',
+  mythology:     'Aoede',    // warm storyteller
+  biography:     'Aoede',
+  shockingFacts: 'Puck',     // energetic
+  mythBusting:   'Puck',
+  stoic:         'Schedar',  // calm, wise
+  psychology:    'Schedar',
+  futuristic:    'Orbit',
+  sciExplained:  'Despina',
+  education:     'Kore',
+  business:      'Kore',
+};
 
 const WORDS_PER_LINE = 1; 
 
@@ -154,22 +205,48 @@ class AudioService {
       console.log("\n=== GEMINI TTS + TIMESTAMPS ===");
       console.log("Text:", text.substring(0, 100));
 
-      const prompt = `Say in Mongolian: ${text}`;
-
       const GEMINI_VOICES = ['Kore','Aoede','Charon','Fenrir','Puck','Orbit',
                              'Schedar','Alya','Despina','Erinome','Gacrux'];
 
-      const voiceName = GEMINI_VOICES.includes(options?.voice_name ?? '')
-        ? options!.voice_name!
-        : 'Kore';
+      // ── Voice selection priority: explicit > genre-map > default ─────────
+      const explicitVoice = options?.voice_name && GEMINI_VOICES.includes(options.voice_name)
+        ? options.voice_name
+        : null;
+      const genreVoice = options?.genre ? GEMINI_VOICE_BY_GENRE[options.genre] : null;
+      const voiceName = explicitVoice ?? genreVoice ?? 'Kore';
 
-      console.log(`Using Gemini voice: ${voiceName}`);
+      // ── Build expressive, genre-aware prompt ─────────────────────────────
+      // Gemini TTS-ийн дуу муу гарах гол шалтгаан нь "Say in Mongolian: ..."
+      // гэх мэт flat instruction. Доорх prompt нь хэв маяг, мэдрэмж, хурдыг
+      // тодорхой зааж өгнө — энэ нь дуу чанарт хамгийн их нөлөөлдөг tweak.
+      const language = options?.language ?? 'mongolian';
+      const langLabel = language === 'mongolian' ? 'in Mongolian' : 'in English';
+      const styleHint = (options?.genre && GEMINI_STYLE_BY_GENRE[options.genre])
+        || 'in an engaging, expressive storytelling voice with natural emotion, appropriate pauses, and clear emphasis on key words';
+
+      // Тоонуудыг хэлэнд тохирох үсгээр уг гаргаж бичих —
+      // Gemini монгол текст дунд тоонуудыг англиар уншиж нийцгүй сонсогддог.
+      const ttsText = this.spellOutNumbers(text, language);
+
+      const prompt = options?.customPrompt ?? [
+        `Read the following text aloud ${langLabel} ${styleHint}.`,
+        `Speak naturally and expressively, like a professional voice actor narrating viral short-form video content.`,
+        `Vary your pace and intonation to match the emotional tone of each sentence.`,
+        `Read all numbers, dates, and quantities naturally as full words in ${language === 'mongolian' ? 'Mongolian' : 'English'} — never spell them digit-by-digit.`,
+        `Do NOT add any extra commentary, intro, outro, or sound effects — only read the text exactly as written.`,
+        ``,
+        `TEXT TO READ:`,
+        ttsText,
+      ].join('\n');
+
+      console.log(`Using Gemini voice: ${voiceName} (genre=${options?.genre ?? 'none'}, lang=${language})`);
 
       const response = await this.geminiTts.models.generateContent({
         model: 'gemini-2.5-flash-preview-tts',
         contents: [{parts: [{text: prompt}]}],
         config: {
           responseModalities: ['AUDIO'],
+          temperature: options?.temperature ?? 1.0,
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName },
@@ -201,7 +278,9 @@ class AudioService {
       const duration   = parseFloat((numSamples / SAMPLE_RATE).toFixed(2));
       
       // ── Word timings (estimated — Gemini TTS doesn't return alignment) ────
-      const words = this.estimateWordTimings(text, duration);
+      // ttsText-г ашиглах нь чухал: тоонуудыг үсгээр болгож сольсон тул
+      // субтитрт орох үг = яг уншигдсан үгтэй таарна.
+      const words = this.estimateWordTimings(ttsText, duration);
       
       console.log(`   PCM size : ${pcmBuffer.length} bytes → WAV: ${audioBuffer.length} bytes`);
       console.log(`   Duration : ${duration.toFixed(2)}s`);
@@ -392,12 +471,118 @@ class AudioService {
     return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
   }
 
+  // ─── Number-to-Mongolian-words ────────────────────────────────────────────
+  // Chimege-ийн regex тоо stripт хаядаг, Gemini-ийн TTS заримдаа тоог
+  // англиар уншдаг. Тиймээс TTS-руу явахаас ӨМНӨ бүх тоог монгол үсгээр
+  // уг гаргаж бичнэ — жиш. "1959 онд" → "нэг мянга есөн зуун тавин ес онд".
+  private readonly mnDigits     = ['тэг','нэг','хоёр','гурав','дөрөв','тав','зургаа','долоо','найм','ес'];
+  // Compounding form used BEFORE зуун/мянга/сая/тэрбум — e.g. "есөн зуун"
+  // (not "ес зуун"), "гурван мянга" (not "гурав мянга").
+  private readonly mnDigitsBeforeUnit = ['','нэг','хоёр','гурван','дөрвөн','таван','зургаан','долоон','найман','есөн'];
+  private readonly mnTensSolo   = ['','арав','хорь','гуч','дөч','тавь','жар','дал','ная','ер'];
+  private readonly mnTensCombo  = ['','арван','хорин','гучин','дөчин','тавин','жаран','далан','наян','ерэн'];
+
+  private numberToMongolian(n: number): string {
+    if (!isFinite(n)) return '';
+    if (n < 0) return 'хасах ' + this.numberToMongolian(-n);
+    if (n === 0) return 'тэг';
+
+    if (n < 10) return this.mnDigits[n];
+
+    if (n < 100) {
+      const t = Math.floor(n / 10);
+      const u = n % 10;
+      return u === 0 ? this.mnTensSolo[t] : `${this.mnTensCombo[t]} ${this.mnDigits[u]}`;
+    }
+
+    if (n < 1000) {
+      const h    = Math.floor(n / 100);
+      const rest = n % 100;
+      // Single-digit hundreds use compound form: "есөн зуун", "гурван зуун".
+      const hWord = `${this.mnDigitsBeforeUnit[h]} зуун`;
+      if (rest === 0) return hWord.replace(/ зуун$/, ' зуу');
+      return `${hWord} ${this.numberToMongolian(rest)}`;
+    }
+
+    if (n < 1_000_000) {
+      const th   = Math.floor(n / 1000);
+      const rest = n % 1000;
+      // Multi-digit thousands → recurse; single-digit uses compound form.
+      const thWord = th < 10
+        ? `${this.mnDigitsBeforeUnit[th]} мянга`
+        : `${this.numberToMongolian(th)} мянга`;
+      return rest === 0 ? thWord : `${thWord} ${this.numberToMongolian(rest)}`;
+    }
+
+    if (n < 1_000_000_000) {
+      const m    = Math.floor(n / 1_000_000);
+      const rest = n % 1_000_000;
+      const mWord = m < 10
+        ? `${this.mnDigitsBeforeUnit[m]} сая`
+        : `${this.numberToMongolian(m)} сая`;
+      return rest === 0 ? mWord : `${mWord} ${this.numberToMongolian(rest)}`;
+    }
+
+    if (n < 1_000_000_000_000) {
+      const b    = Math.floor(n / 1_000_000_000);
+      const rest = n % 1_000_000_000;
+      const bWord = b < 10
+        ? `${this.mnDigitsBeforeUnit[b]} тэрбум`
+        : `${this.numberToMongolian(b)} тэрбум`;
+      return rest === 0 ? bWord : `${bWord} ${this.numberToMongolian(rest)}`;
+    }
+
+    // Trillion+ : digit-by-digit fallback
+    return String(n).split('').map(d => this.mnDigits[+d] || d).join(' ');
+  }
+
+  /**
+   * Convert digits embedded in text to spelled-out Mongolian (or leave intact
+   * for English). Handles:
+   *   - thousands separators (1,000 / 1.000 — locale-aware-ish)
+   *   - percent (50% → "тавин хувь")
+   *   - currency ($50 → "тавин доллар", ₮50 → "тавин төгрөг")
+   *   - decimals (3.14 → "гурав цэг арван дөрөв")
+   */
+  private spellOutNumbers(text: string, language: 'mongolian' | 'english' = 'mongolian'): string {
+    if (language !== 'mongolian') return text; // Gemini reads English digits OK
+
+    let out = text;
+
+    // Currency prefixes first ($50, ₮50) — replace prefix with suffix word.
+    out = out.replace(/\$(\d[\d,]*(?:\.\d+)?)/g, (_m, num) => `${num} доллар`);
+    out = out.replace(/₮(\d[\d,]*(?:\.\d+)?)/g, (_m, num) => `${num} төгрөг`);
+
+    // Decimals: 3.14 → "гурав цэг арван дөрөв"
+    out = out.replace(/(\d+)\.(\d+)/g, (_m, intPart, fracPart) => {
+      const i = parseInt(intPart, 10);
+      const f = parseInt(fracPart, 10);
+      if (isNaN(i) || isNaN(f)) return _m;
+      return `${this.numberToMongolian(i)} цэг ${this.numberToMongolian(f)}`;
+    });
+
+    // Integers with optional thousands separators (1,000 / 1 000)
+    out = out.replace(/\d{1,3}(?:[,\s]\d{3})+|\d+/g, (m) => {
+      const clean = m.replace(/[,\s]/g, '');
+      const n = parseInt(clean, 10);
+      if (isNaN(n)) return m;
+      return this.numberToMongolian(n);
+    });
+
+    // Percent suffix: "X хувь" if "X%"
+    out = out.replace(/([а-яёөүң]+)\s*%/gi, '$1 хувь');
+
+    return out;
+  }
+
   // ─── Cleaning ─────────────────────────────────────────────────────────────
 
   private cleanTextForChimege(text: string): string {
     let cleaned = text;
     cleaned = cleaned.normalize('NFC');
     cleaned = cleaned.trim().replace(/\s+/g, ' ');
+    // Тоонуудыг үсгээр уг гаргаж бичих — доорх regex digits-ийг хайчилна.
+    cleaned = this.spellOutNumbers(cleaned, 'mongolian');
     cleaned = cleaned.replace(/[^А-ЯЁа-яёӨөҮүҢң\s?!.\-'":,]/g, '');
     cleaned = cleaned.replace(/[«»""'']/g, '"');
     cleaned = cleaned.replace(/[‚„]/g, "'");

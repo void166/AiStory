@@ -11,6 +11,7 @@ import scriptRoutes from './routes/scriptRoutes';
 import audioRoute from './routes/audioRoute';
 import videoRoute from './routes/videoRoutes';
 import adminRouter from './routes/adminRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4900;
@@ -60,8 +61,9 @@ app.use('/api',            scriptRoutes);
 app.use('/api/ai/image',   aiImageRoutes);
 app.use('/api/ai/script',  scriptRoutes);
 app.use('/api/audio',      audioRoute);
-app.use('/api/video',      videoRoute);
-app.use('/api/admin',      adminRouter);
+app.use('/api/video',         videoRoute);
+app.use('/api/admin',         adminRouter);
+app.use('/api/notifications', notificationRoutes);
 
 
 app.get('/health', (_req: Request, res: Response) => {

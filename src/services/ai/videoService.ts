@@ -269,7 +269,12 @@ class VideoService {
           totalScenes,
           percent: 20 + Math.round((i / totalScenes) * 30),
         });
-        const audioResults = await this.generateAudioForScenes([scene], options.voiceId, options.ttsProvider ?? 'gemini');
+        const audioResults = await this.generateAudioForScenes(
+          [scene],
+          options.voiceId,
+          options.ttsProvider ?? 'gemini',
+          { genre: options.genre, language: options.language },
+        );
         processedScenes.push({ ...audioResults[0] } as SceneWithMedia);
 
         // Cancellation checkpoint per scene — partial includes whatever audio
@@ -547,7 +552,22 @@ async reGenNarration(
   const provider = (scene.ttsProvider as 'elevenlabs' | 'gemini' | 'chimege') || 'gemini';
   console.log(`  Regenerating narration with [${provider}]: ${newText.substring(0, 60)}...`);
 
-  const audioResult = await this.callTTS(provider, newText, scene.voiceId ?? undefined);
+  // Pull genre/language from the parent Video so Gemini TTS can pick the
+  // right voice + delivery style. Lookup is best-effort — if it fails we
+  // just fall back to neutral defaults inside callTTS.
+  let ttsContext: { genre?: string; language?: string } = {};
+  try {
+    const parentVideo = await Video.findByPk(scene.videoId, {
+      attributes: ['genre', 'language'],
+    });
+    if (parentVideo) {
+      ttsContext = { genre: parentVideo.genre, language: parentVideo.language };
+    }
+  } catch (e: any) {
+    console.warn(`  ⚠️  Could not load video for TTS context: ${e.message}`);
+  }
+
+  const audioResult = await this.callTTS(provider, newText, scene.voiceId ?? undefined, ttsContext);
 
   const filename = `audio_${this.generateVideoId()}_scene${scene.sceneIndex}_regen`;
   const newAudioUrl = await audioService.uploadToCloudinary(audioResult.audioBuffer, filename);
@@ -566,29 +586,105 @@ async reGenNarration(
 
 
   async regenerateSceneMedia(
-    _videoId:        string,
-    _sceneIndex:     number,
+    videoId:         string,
+    sceneIndex:      number,
     regenerateWhat:  "audio" | "image" | "both",
     sceneData?:      { imagePrompt?: string; narration?: string; time?: string; scene?: string },
   ): Promise<Partial<SceneWithMedia>> {
     const result: Partial<SceneWithMedia> = {};
 
+    // Pull the saved Scene (if any) so we can re-use its ttsProvider/voiceId.
+    // Newly-added scenes from the UI may not exist in the DB yet — that's OK,
+    // we'll fall back to sane defaults and skip DB writes.
+    const dbScene = await Scene.findOne({ where: { videoId, sceneIndex } });
+
+    // ── IMAGE ─────────────────────────────────────────────────────────────
     if ((regenerateWhat === "image" || regenerateWhat === "both") && sceneData?.imagePrompt) {
-      console.log(`\n🎨 Regenerating image for scene...`);
+      console.log(`\n🎨 Regenerating image for scene ${sceneIndex}…`);
       const newImageUrl = await imageService.generateSingle(
         {
-          time:        sceneData.time        ?? "",
-          scene:       sceneData.scene       ?? "",
+          time:        sceneData.time  ?? dbScene?.time  ?? "",
+          scene:       sceneData.scene ?? dbScene?.scene ?? "",
           description: sceneData.imagePrompt ?? "",
         },
         sceneData.imagePrompt,
       );
       result.imageUrl = newImageUrl;
       console.log(`  ✓ New image: ${newImageUrl.substring(0, 60)}...`);
+
+      if (dbScene) {
+        dbScene.imageUrl    = newImageUrl;
+        dbScene.imagePrompt = sceneData.imagePrompt ?? dbScene.imagePrompt;
+        try { await dbScene.save(); } catch (e: any) {
+          console.warn(`  ⚠️  Could not persist new image to DB: ${e.message}`);
+        }
+      }
     }
 
+    // ── AUDIO ─────────────────────────────────────────────────────────────
     if (regenerateWhat === "audio" || regenerateWhat === "both") {
-      throw new Error("Audio regeneration requires database integration to retrieve voice settings");
+      const narration = (sceneData?.narration ?? dbScene?.narration ?? "").trim();
+      if (!narration) {
+        throw new Error(
+          `Cannot regenerate audio — narration is empty for scene ${sceneIndex}`,
+        );
+      }
+
+      // Prefer the scene's stored voice; if missing (e.g. newly-added scene),
+      // use the video's defaults; finally fall back to gemini/no-voice.
+      let provider: "elevenlabs" | "gemini" | "chimege" =
+        (dbScene?.ttsProvider as any) || "gemini";
+      let voiceId: string | undefined = dbScene?.voiceId ?? undefined;
+
+      if (!dbScene) {
+        // Inherit from sibling scenes of the same video (most consistent UX).
+        const sibling = await Scene.findOne({ where: { videoId } });
+        if (sibling) {
+          provider = (sibling.ttsProvider as any) || provider;
+          voiceId  = sibling.voiceId ?? voiceId;
+        }
+      }
+
+      console.log(
+        `\n🎙️  Regenerating audio for scene ${sceneIndex} with [${provider}]…`,
+      );
+
+      // Best-effort lookup of parent Video to get genre/language for Gemini TTS.
+      let ttsContext: { genre?: string; language?: string } = {};
+      try {
+        const parentVideo = await Video.findByPk(videoId, {
+          attributes: ['genre', 'language'],
+        });
+        if (parentVideo) {
+          ttsContext = { genre: parentVideo.genre, language: parentVideo.language };
+        }
+      } catch (e: any) {
+        console.warn(`  ⚠️  Could not load video for TTS context: ${e.message}`);
+      }
+
+      const audioResult = await this.callTTS(provider, narration, voiceId, ttsContext);
+
+      const filename = `audio_${this.generateVideoId()}_scene${sceneIndex}_regen`;
+      const newAudioUrl = await audioService.uploadToCloudinary(
+        audioResult.audioBuffer,
+        filename,
+      );
+
+      result.audioUrl      = newAudioUrl;
+      result.audioDuration = audioResult.duration;
+      result.words         = audioResult.words;
+
+      if (dbScene) {
+        dbScene.narration     = narration;
+        dbScene.audioUrl      = newAudioUrl;
+        dbScene.audioDuration = audioResult.duration ?? dbScene.audioDuration;
+        dbScene.words         = audioResult.words ? JSON.stringify(audioResult.words) : null;
+        try { await dbScene.save(); } catch (e: any) {
+          console.warn(`  ⚠️  Could not persist new audio to DB: ${e.message}`);
+        }
+      }
+
+      console.log(`  ✓ New audio: ${newAudioUrl.substring(0, 60)}...  (${audioResult.duration?.toFixed?.(2)}s)`);
     }
 
     return result;
@@ -600,16 +696,19 @@ async reGenNarration(
     scenes: any[],
     voiceId?: string,
     ttsProvider: 'elevenlabs' | 'gemini' | 'chimege' = 'elevenlabs',
+    // Genre/language hand off — Gemini TTS uses these to pick voice +
+    // delivery style. Other providers ignore them.
+    context?: { genre?: string; language?: string },
   ): Promise<SceneWithMedia[]> {
     const result: SceneWithMedia[] = [];
-  
+
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
-  
+
       try {
         console.log(`  [${i + 1}/${scenes.length}] Generating audio for: ${scene.time}`);
-  
-        let audioResult = await this.callTTS(ttsProvider, scene.narration, voiceId);
+
+        let audioResult = await this.callTTS(ttsProvider, scene.narration, voiceId, context);
         
 
   
@@ -657,8 +756,19 @@ async reGenNarration(
   private async callTTS(
     provider: 'elevenlabs' | 'gemini' | 'chimege',
     narration: string,
-    voiceId?: string
+    voiceId?: string,
+    // Optional context — used by Gemini TTS to pick voice + delivery style.
+    // Falls back to safe defaults if not provided (back-compat with old callers).
+    context?: { genre?: string; language?: string }
   ){
+    // Normalise raw `language` string from DB ("en"/"english"/"mn"/"mongolian"…)
+    // into the strict union Gemini TTS expects.
+    const normLang: 'mongolian' | 'english' = (() => {
+      const l = (context?.language ?? '').toLowerCase();
+      if (l.startsWith('mn') || l.startsWith('mon')) return 'mongolian';
+      return 'english';
+    })();
+
     switch (provider){
       case 'elevenlabs':
         return audioService.textToSpeechEleven(narration, {
@@ -666,8 +776,12 @@ async reGenNarration(
           speed: 1.0, pitch: 1.0
         });
         case 'gemini':
+          // Pass through `voice_name` only when caller explicitly set one;
+          // otherwise let aud.ts pick a genre-appropriate default voice.
           return audioService.textToSpeechGemini(narration,{
-            voice_name: voiceId || 'Charon'
+            ...(voiceId ? { voice_name: voiceId } : {}),
+            genre: context?.genre,
+            language: normLang,
           });
         case 'chimege':
           return audioService.textToSpeechChimege(narration,{
@@ -675,7 +789,7 @@ async reGenNarration(
             speed: 1.0, pitch: 1.0
           });
 
-          default: 
+          default:
           throw new Error(`Unknown TTS provider: ${provider}`);
     }
   }

@@ -126,20 +126,43 @@ export class ProjectController {
       const { videoId, projectId } = req.body;
       if (!videoId) return res.status(400).json({ success: false, message: "videoId шаардлагатай" });
 
-      const video = await Video.findOne({ where: { id: videoId, userId } });
-      if (!video) return res.status(404).json({ success: false, message: "Видео олдсонгүй" });
-
-      if (projectId) {
-        const project = await Project.findOne({ where: { id: projectId, userId } });
-        if (!project) return res.status(404).json({ success: false, message: "Project олдсонгүй" });
+      // Guard against malformed UUIDs — passing a non-UUID string to
+      // Postgres "uuid" columns throws "invalid input syntax for type uuid",
+      // which would bubble up as a vague 500. Reject early with a clear 400.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (typeof videoId !== 'string' || !UUID_RE.test(videoId.trim())) {
+        return res.status(400).json({ success: false, message: "videoId буруу UUID формат" });
+      }
+      if (projectId != null && projectId !== '') {
+        if (typeof projectId !== 'string' || !UUID_RE.test(projectId.trim())) {
+          return res.status(400).json({ success: false, message: "projectId буруу UUID формат" });
+        }
       }
 
-      video.projectId = projectId || null;
+      const video = await Video.findOne({ where: { id: videoId.trim(), userId } });
+      if (!video) return res.status(404).json({ success: false, message: "Видео олдсонгүй" });
+
+      let resolvedProjectId: string | null = null;
+      if (projectId && typeof projectId === 'string' && projectId.trim()) {
+        const project = await Project.findOne({ where: { id: projectId.trim(), userId } });
+        if (!project) return res.status(404).json({ success: false, message: "Project олдсонгүй" });
+        resolvedProjectId = projectId.trim();
+      }
+
+      video.projectId = resolvedProjectId;
       await video.save();
 
       return res.status(200).json({ success: true, data: { videoId, projectId: video.projectId } });
     } catch (err: any) {
-      return res.status(500).json({ success: false, message: err.message });
+      console.error("[project.controller] moveVideo failed:", err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || "Move failed",
+        // In dev, surface the underlying Postgres detail so we can see WHY
+        ...(process.env.NODE_ENV !== 'production' && err?.original
+          ? { detail: err.original.message ?? String(err.original) }
+          : {}),
+      });
     }
   }
 

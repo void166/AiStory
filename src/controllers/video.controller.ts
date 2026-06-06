@@ -13,6 +13,7 @@ import path from "path";
 import { Op } from "sequelize";
 import { progressEmitter, emitProgress } from "../services/progressEmitter";
 import cloudinaryService from "../services/storage/cloudinaryService";
+import { createNotification } from "../services/notificationService";
 
 
 function getStringParam(param: string | string[] | undefined): string | null {
@@ -122,10 +123,23 @@ class VideoController {
           const partial = err?.partial ?? {};
           console.log('🛑 Generation cancelled, saving partial state as draft');
 
+          // Same layered guards as the success path (UUID-shape + try/catch).
+          const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           let safeProjectId: string | null = null;
-          if (projectId && typeof projectId === 'string' && projectId.trim()) {
-            const project = await Project.findOne({ where: { id: projectId.trim(), userId } });
-            if (project) safeProjectId = projectId.trim();
+          if (
+            projectId &&
+            typeof projectId === 'string' &&
+            projectId.trim() &&
+            UUID_RE.test(projectId.trim())
+          ) {
+            try {
+              const project = await Project.findOne({
+                where: { id: projectId.trim(), userId },
+              });
+              if (project) safeProjectId = projectId.trim();
+            } catch {
+              /* swallow — fall through to null */
+            }
           }
 
           const t = await sequelize.transaction();
@@ -204,24 +218,60 @@ class VideoController {
       // Validate projectId exists & belongs to this user; else fall back to null.
       // Prevents FK constraint violation on Video.create when frontend sends
       // a stale / deleted project id.
+      //
+      // Three layered guards:
+      //   1) UUID-shape regex — rejects "1", "abc", "" before they hit Postgres
+      //      (Postgres throws "invalid input syntax for type uuid" otherwise,
+      //      which would propagate out as a 500 instead of falling back).
+      //   2) Project.findOne lookup — wrapped in try/catch so any DB hiccup
+      //      degrades to "unassigned" instead of killing the request.
+      //   3) Final value is always either a verified UUID or null.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       let safeProjectId: string | null = null;
-      if (projectId && typeof projectId === 'string' && projectId.trim()) {
-        const project = await Project.findOne({ where: { id: projectId.trim(), userId } });
-        if (project) {
-          safeProjectId = projectId.trim();
-        } else {
-          console.warn(`⚠️  Project ${projectId} not found for user ${userId} — saving video as unassigned`);
+      if (
+        projectId &&
+        typeof projectId === 'string' &&
+        projectId.trim() &&
+        UUID_RE.test(projectId.trim())
+      ) {
+        try {
+          const project = await Project.findOne({
+            where: { id: projectId.trim(), userId },
+          });
+          if (project) {
+            safeProjectId = projectId.trim();
+          } else {
+            console.warn(`⚠️  Project ${projectId} not found for user ${userId} — saving video as unassigned`);
+          }
+        } catch (lookupErr: any) {
+          console.warn(`⚠️  Project lookup failed (${lookupErr?.message}) — saving video as unassigned`);
         }
+      } else if (projectId) {
+        console.warn(`⚠️  projectId "${projectId}" is not a valid UUID — saving video as unassigned`);
       }
 
       let t: Awaited<ReturnType<typeof sequelize.transaction>> | null = null;
       try {
         t = await sequelize.transaction();
 
+        // ── Title resolution priority ──────────────────────────────────────
+        //   1) explicit `title` from the frontend (e.g. PDF flow passes a
+        //      short LLM-generated title separately from the long topic)
+        //   2) `result.title` produced by the script-generation LLM — always
+        //      a short, viral-friendly headline
+        //   3) fall back to a 80-char slice of the topic — never use the raw
+        //      topic since it can be 400+ chars from PDF summaries.
+        const resolvedTitle: string =
+          (typeof title === 'string' && title.trim() && title.trim().length <= 200)
+            ? title.trim()
+            : (result.title && typeof result.title === 'string' && result.title.trim())
+              ? result.title.trim()
+              : (topic.length > 80 ? topic.slice(0, 77).trim() + '…' : topic);
+
         const video = await Video.create({
           userId: userId,
           projectId: safeProjectId,
-          title: title || topic,
+          title: resolvedTitle,
           topic,
           genre: genre || "horror",
           language: language || "mongolian",
@@ -310,6 +360,22 @@ class VideoController {
           ...scene,
           id: createdScenes[index]?.id ?? undefined,
         }));
+
+        // ── In-app notification: video ready ──────────────────────────────
+        // Fire-and-forget — never block the response on the bell.
+        createNotification({
+          userId:  userId,
+          type:    "video_completed",
+          title:   "🎬 Видео бэлэн боллоо",
+          message: `"${resolvedTitle}" — таны видео амжилттай үүсгэгдлээ.`,
+          link:    `/studio?videoId=${video.id}`,
+          data: {
+            videoId:      video.id,
+            title:        resolvedTitle,
+            thumbnailUrl: video.thumbnail_url ?? null,
+            duration:     result.duration ?? duration ?? 60,
+          },
+        });
 
         res.status(200).json({
           success: true,

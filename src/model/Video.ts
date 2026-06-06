@@ -66,11 +66,15 @@ Video.init({
         allowNull: false
     },
     title: {
-        type: DataTypes.STRING,
+        // TEXT (not VARCHAR(255)) — PDF-derived flows can produce long titles
+        // and the user might paste a long custom one too.
+        type: DataTypes.TEXT,
         allowNull: false
     },
     topic:{
-        type: DataTypes.STRING,
+        // TEXT (not VARCHAR(255)) — topics from PDF summaries routinely
+        // exceed 255 chars (200-500 char hooks are normal).
+        type: DataTypes.TEXT,
         allowNull: false
     },
     genre:{

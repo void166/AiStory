@@ -7,18 +7,27 @@ export class AudioController {
 
   async genAudioForGemini(req: Request, res: Response){
     try{
-      const {text, voice_name}=req.body;
+      // `genre` + `language` нь Gemini TTS-д хамгийн их нөлөөлдөг — дуу хоолой
+      // болон уншлагын style-ыг тэдгээрээс хамаарч сонгоно. `customPrompt` бол
+      // advanced override (хэрэглэгч өөрөө prompt бичих хүсэлтэй бол).
+      const { text, voice_name, genre, language, customPrompt, temperature } = req.body;
 
       if (!text || text.trim() === '') {
         return res.status(400).json({
           success: false,
           message: 'Text is required'
         });
-      }   
+      }
 
       console.log("generating audio for gemini");
 
-      const result = await audioService.textToSpeechGemini(text,{voice_name});
+      const result = await audioService.textToSpeechGemini(text, {
+        voice_name,
+        genre,
+        language,
+        customPrompt,
+        temperature,
+      });
 
       const filename = `audio_gemini_${Date.now()}.wav`;
       const audioUrl = await audioService.uploadToCloudinary(
